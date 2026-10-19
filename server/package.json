@@ -1,0 +1,23 @@
+{
+  "name": "proxispeak-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ProxiSpeak server: Express + Socket.io signaling and the MongoDB geospatial engine",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon --watch . --watch ../shared index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "mongoose": "^9.11.2",
+    "socket.io": "^4.8.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "socket.io-client": "^4.8.4"
+  }
+}
