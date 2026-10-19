@@ -1,0 +1,11 @@
+{
+  "name": "proxispeak",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ProxiSpeak: a virtual office in the browser with proximity voice chat. Convenience scripts only; real packages live in server/ and client/.",
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev"
+  }
+}
