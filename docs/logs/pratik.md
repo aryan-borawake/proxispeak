@@ -2,7 +2,39 @@
 
 Module 2: Geospatial Engine · Branch `pratik`
 
-## 21 Oct 2026 — Task 1: local MongoDB setup and module preparation
+## 21 Oct 2026 — Tasks 2–11: Core Geospatial Engine, Test Suite, and Spatial Audit
+
+**What I built**
+- Implemented `server/geo/db.js` with idempotent connection management (`connectDb`, `disconnectDb`).
+- Created `server/geo/models/Position.js` with compound 2D index `{ loc: '2d', roomId: 1 }` bounded to `[0, 4096]` (`WORLD_MAX_PX`).
+- Built `server/geo/scripts/seed-fake-users.js` supporting configurable user counts and rooms.
+- Built `server/geo/geoEngine.js` implementing `createGeoEngine` with `upsertPositions` (single `bulkWrite`), `findNearby` (`$near` with `Math.hypot` distance calculation, room isolation, and self-exclusion), and `removeUser`.
+- Built `server/geo/peerChanges.js` implementing pure `computePeerChanges` hysteresis (100 px connect / 140 px disconnect).
+- Exported the complete public API matching `CONTRACTS.md` from `server/geo/index.js`.
+- Implemented `server/geo/scripts/test-nearby.js` with 16 deterministic tests (known distances 50, 99, 101, 150 px, room isolation, self-exclusion, removal, and all hysteresis edge cases); all 16 passed.
+- Implemented `server/geo/scripts/spatial-audit.js` and benchmarked 10 rounds of 50 parallel queries; verified query plan uses `loc_2d_roomId_1` with `GEO_NEAR_2D` stage, achieving ~9.0–9.3 ms average latency (< 20 ms target) and ~15.2–16.4 ms full tick duration (with 9/10 rounds staying under 16 ms peak).
+- Authored comprehensive technical documentation in `docs/geo.md` and benchmark report in `docs/geo-audit.md`.
+
+**How it works (in my own words)**
+- When avatars move, `upsertPositions` bundles all coordinate updates into a single `bulkWrite` operation, drastically reducing database traffic to one round-trip per tick.
+- `findNearby` queries the 2D index using `$near` with `$maxDistance` and calculates exact Euclidean distance using `Math.hypot`. An in-memory position cache avoids redundant `findOne` queries, speeding up parallel lookups.
+- `computePeerChanges` enforces hysteresis: avatars must come within 100 px to start WebRTC audio and only disconnect once beyond 140 px, eliminating connection flapping.
+
+**Problems and how I fixed them**
+- During initial parallel testing of 50 concurrent queries, latency occasionally spiked above 20 ms due to redundant `findOne` calls preceding each `$near` query. I resolved this by caching positions in memory during `upsertPositions` and using `{ loc: 1 }` field projections, dropping average query latency to ~9.0 ms.
+- Mongoose `.explain('executionStats')` returned a `FETCH` root stage for execution; inspecting `queryPlanner.winningPlan` confirmed `GEO_NEAR_2D` as the driving spatial index stage on `loc_2d_roomId_1`.
+
+**What I learned**
+- How MongoDB constructs execution stages (`GEO_NEAR_2D` driving `FETCH` and `IXSCAN`) for 2D flat indexes.
+- How in-memory position caching paired with periodic batch writes keeps high-frequency spatial operations under 10 ms without overloading the database.
+- How to structure deterministic test suites with known geometric points to verify boundary conditions reliably.
+
+**Tomorrow**
+- Prepare pull request into `dev` for Integration #1.
+- Coordinate with Person 1 (Aryan) for `server/index.js` integration (`attachSignaling(io, { geo })`).
+- Begin preparation for Week 3 zones (`server/geo/models/Zone.js` and `$geoWithin`).
+
+## 20 Oct 2026 — Task 1: local MongoDB setup and module preparation
 
 **What I did**
 - Set up MongoDB Community Server locally on macOS and verified the background service is running.
