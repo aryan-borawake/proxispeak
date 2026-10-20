@@ -1,32 +1,33 @@
-# Pratik — Geospatial Engine Learning Log
+# Pratik — Daily Log
 
-## 20 October 2026
+Module 2: Geospatial Engine · Branch `pratik`
 
-### What I learned today
+## 21 Oct 2026 — Task 1: local MongoDB setup and module preparation
 
-- ProxiSpeak is a browser-based virtual office where users move around a 2D map.
-- The Geospatial Engine works with map positions represented as pixel coordinates (`x` and `y`), rather than geographic latitude/longitude.
-- MongoDB's `2d` geospatial index is appropriate for this 2D pixel plane. The project brief specifies using `2d`, not `2dsphere`.
-- MongoDB `$near` will be used to find nearby users.
-- MongoDB `$geoWithin` is planned for checking whether users are inside a defined zone in a later phase.
-- The planned proximity rule is to connect users at 100 pixels and disconnect them when they move beyond 140 pixels. The gap helps avoid repeatedly connecting and disconnecting users near one boundary.
-- The team plan is to keep frequently changing positions in server memory and batch-write moved positions to MongoDB four times per second.
-- The target in the project brief is to support 50+ users and keep spatial queries under 20 ms.
+**What I did**
+- Set up MongoDB Community Server locally on macOS and verified the background service is running.
+- Connected to the local database using `mongosh` to confirm the daemon accepts connections.
+- Tested a local Node.js connection to MongoDB, successfully inserting and retrieving a test document.
+- Studied the ProxiSpeak Geospatial Engine specifications: 2D pixel coordinates, MongoDB `2d` index, `$near` proximity query, and planned `$geoWithin` zone boundaries.
+- Studied and confirmed the proximity thresholds: connect at 100 pixels (`EARSHOT_PX`) and disconnect beyond 140 pixels (`DISCONNECT_PX`).
+- Recorded and pushed initial setup progress in commit `2e48feb`.
 
-### What I completed today
+**How it works (in my own words)**
+- ProxiSpeak represents avatars on a 2D canvas using pixel coordinates `[x, y]` rather than spherical latitude and longitude, so MongoDB's flat `2d` index bounded to `[0, 4096]` (`WORLD_MAX_PX`) is required instead of `2dsphere`.
+- Proximity discovery uses MongoDB's `$near` query to find nearby users, while zone boundary checks (like meeting rooms) will use `$geoWithin` in later phases.
+- To prevent voice connection flickering when avatars hover at the boundary, connections engage at `EARSHOT_PX` (100 px) and only drop once past `DISCONNECT_PX` (140 px).
+- Avatar positions stay in server memory and batch-write to MongoDB 4 times per second (every 250 ms tick) to keep individual database queries fast and well within Atlas/local operational limits.
 
-- Set up MongoDB Community Server locally on my Mac and started the MongoDB service.
-- Connected to the local database with `mongosh`.
-- Tested a local MongoDB connection from Node.js.
-- Successfully inserted a test document and read it back, confirming that the local database connection and basic read/write flow work.
-- Reviewed the Geospatial Engine responsibilities and identified the first implementation steps: define the position data shape, create a `2d` index, seed fake users, and test a `$near` query.
+**Problems and how I fixed them**
+- My branch `pratik` was initially on commit `3233e38` without the team skeleton. Following `docs/git-guide.md`, I performed the one-time fast-forward merge of `main` into `pratik` to bring in `CONTRACTS.md`, `shared/`, and module folders without conflicts.
+- Initially, `mongod` was not running in the environment; I set up MongoDB Community Server locally and verified connectivity via `mongosh` before testing database operations with Node.js.
 
-### Current status
+**What I learned**
+- Why flat coordinate systems need a `2d` index with explicit bounds `{ min: 0, max: 4096 }` rather than `2dsphere`.
+- The importance of hysteresis (100 px connect vs 140 px disconnect) in real-time spatial audio to avoid flapping.
+- The project's contract-first structure: only touch `server/geo/` and `docs/logs/pratik.md`, never hand-code event names or constants, and keep the public API matching `CONTRACTS.md`.
 
-**Completed:** Local MongoDB setup and a basic Node.js database read/write test.
-
-**Next steps:** Check the repository's current `AGENTS.md` and `CONTRACTS.md` instructions when available; then work only inside `server/geo/`, create the position/index setup, seed fake users, and verify a `$near` query against local test data.
-
-### Notes
-
-This entry records setup and learning progress. The Geospatial Engine implementation, batch updates, proximity connection rules, zones, and performance audit are not yet marked complete.
+**Tomorrow**
+- Task 2: Create `server/geo/models/Position.js` with the 2D index bounded to `[0, 4096]`.
+- Task 3: Build `server/geo/scripts/seed-fake-users.js` to populate test avatars.
+- Task 4: Implement and test the first `findNearby` query with `$near`.
