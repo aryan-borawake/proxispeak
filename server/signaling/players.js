@@ -7,6 +7,7 @@
 //
 // The Map stores pairs:  socket id  →  { id, name, x, y, dir }
 // Example entry:         'kX9a2bQ'  →  { id: 'kX9a2bQ', name: 'Riya', x: 200, y: 200, dir: 'down' }
+// After their first move a player also has `moved: true` (see updatePlayerPosition below).
 
 const players = new Map();
 
@@ -18,6 +19,33 @@ const players = new Map();
 export function addPlayer({ id, name, x, y, dir }) {
   const player = { id, name, x, y, dir };
   players.set(id, player);
+  return player;
+}
+
+/**
+ * Store a player's new position after a valid EVENTS.MOVE.
+ * The caller (the move handler) must validate x, y and dir first.
+ *
+ * We copy only x, y and dir, one by one. Even if the browser sent extra fields
+ * (e.g. { x, y, dir, name: 'Hacker' }), they never reach the store.
+ *
+ * `moved = true` marks "this player moved since the last proximity tick".
+ * The proximity tick (Task 6) will read it and set it back to false.
+ *
+ * @param {string} id - the player's socket id
+ * @param {{ x: number, y: number, dir: string }} position - already validated
+ * @returns {object | undefined} the updated player, or undefined if nobody has that id
+ */
+export function updatePlayerPosition(id, { x, y, dir }) {
+  const player = players.get(id);
+  if (!player) {
+    return undefined;
+  }
+
+  player.x = x;
+  player.y = y;
+  player.dir = dir;
+  player.moved = true;
   return player;
 }
 

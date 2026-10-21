@@ -1,6 +1,6 @@
 # ProxiSpeak Contracts
 
-**v1 — 19 Oct 2026**
+**v2 — 21 Oct 2026**
 
 This file is the single source of truth for how the four modules talk to each other: every event name, payload, function, database shape and file format. If your code and this file disagree, this file wins.
 
@@ -55,6 +55,7 @@ The real numbers and names live in code in `shared/constants.js` and `shared/eve
 | `DIRECTIONS` | `['up', 'down', 'left', 'right']` | Directions an avatar can face |
 | `ZONE_TYPES` | `{ OPEN: 'open', PRIVATE: 'private', SILENT: 'silent', STAGE: 'stage', LOBBY: 'lobby' }` | Kinds of zone on the map |
 | `AUDIO_MODES` | `{ FALLOFF: 'falloff', FULL: 'full' }` | `falloff` = quieter with distance; `full` = full volume |
+| `ERROR_CODES` | `{ BAD_NAME, ALREADY_JOINED, NOT_JOINED, BAD_MOVE }` (each value is the same text as its name, e.g. `'BAD_MOVE'`) | The `code` in `SERVER_ERROR`. `BAD_NAME` = join had a missing or empty name. `ALREADY_JOINED` = this tab has already joined. `NOT_JOINED` = sent something (e.g. a move) before joining. `BAD_MOVE` = a move had a bad `x`, `y` or `dir`, so it was ignored |
 
 All objects and arrays are frozen with `Object.freeze`, so code can't change them by accident.
 
@@ -77,6 +78,8 @@ Use the constant (`EVENTS.MOVE`), never the string (`'player:move'`).
 | `SERVER_ERROR` | `'server:error'` | server → one browser | `{ code, message }` | on bad input |
 
 In Weeks 1–2, `mode` is always `'falloff'` and `changed` is always empty.
+
+In `SERVER_ERROR`, `code` is always one of `ERROR_CODES` (section 3).
 
 In `PLAYERS_STATE`, `t` is the server's clock time in ms when it sent the message (`Date.now()`). The world uses it to slide other characters smoothly.
 
@@ -306,3 +309,4 @@ Layers, in this order and with exactly these names:
 |---|---|---|
 | v1 | 18 Oct 2026 | First version: constants, events, signaling rules, module interfaces, database, map format, planned zone rules |
 | v1 | 19 Oct 2026 | Zone rules: which map areas use which zone type. Server interfaces: `connectDb(uri)` doesn't read `.env`; the caller passes `process.env.MONGODB_URI` |
+| v2 | 21 Oct 2026 | Added ERROR_CODES (BAD_NAME, ALREADY_JOINED, NOT_JOINED, BAD_MOVE) to shared/constants.js; SERVER_ERROR `code` uses them |
