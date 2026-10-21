@@ -1,18 +1,23 @@
 // client/src/world/WorldLab.jsx — Person 3
-// Test page for Module 3 (open http://localhost:5173/?lab=world).
-// SKELETON STUB: replace this with the real test page.
+import React from 'react';
+import { WorldCanvas } from './WorldCanvas.jsx';
 
 export function WorldLab() {
   return (
-    <section>
-      <h2>Module 3 lab — not built yet</h2>
-      <p>
-        Owner: Person 3 (Anjali). Task 1: a canvas on the page. <code>WorldCanvas.jsx</code> puts
-        a canvas on this test page and draws one coloured rectangle. Create your log.
-      </p>
-      <p>
-        See <code>docs/briefs/module-3-world.md</code>.
-      </p>
+    <section style={{ padding: '20px', fontFamily: 'sans-serif', color: '#f8fafc', background: '#090d16', minHeight: '100vh' }}>
+      <h2>Module 3 Lab: 2D World Canvas</h2>
+      <p>Owner: Person 3 (Anjali). Task 1 complete: Canvas rendered with a test rectangle.</p>
+      
+      <div style={{ marginTop: '20px' }}>
+        <WorldCanvas
+          net={null}
+          selfId="anjali-local"
+          spawn={{ x: 150, y: 150 }}
+          initialPlayers={[]}
+          onFrame={() => {}}
+          debug={true}
+        />
+      </div>
     </section>
   );
 }
