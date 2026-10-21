@@ -48,3 +48,26 @@ Module 1: Signaling + WebRTC · Branch `aryan` · Team lead
 
 **Tomorrow**
 - Task 3: receive positions, broadcast them every 100 ms, and tell others when someone leaves.
+
+## 21 Oct 2026 — Task 3: positions in, positions out
+
+**What I built**
+- Moved the error codes into `shared/constants.js` as `ERROR_CODES` and added two new ones: `NOT_JOINED` (sent a move before joining) and `BAD_MOVE` (bad x, y or direction). CONTRACTS.md is now v2.
+- `player:move` is now validated: x and y must be real numbers from 0 to 4096, and the direction must be up, down, left or right. A bad move gets a `server:error` with `BAD_MOVE` and changes nothing.
+- A good move overwrites that player's x, y and dir in the in-memory Map, and sets a `moved` flag for the proximity tick I'll build in Task 6.
+- Every 100 ms the server sends one `players:state` message to the whole room with everyone's latest `{ id, x, y, dir }` and a timestamp `t`.
+- When a tab closes, the server removes the player and sends `player:left` with their id.
+- Wrote `server/scripts/move-test.js` (11 checks). All pass, and `join-test.js` still passes.
+
+**How it works**
+- The server doesn't forward each move. Each move just replaces the player's old position, and a timer sends the whole list every 100 ms. So 10 people moving 10 times a second cause 10 messages a second to each browser, not 900 in total.
+- Validating means checking data before using it, because a browser can send anything, like `x: '10'` or `y: 5000`.
+
+**Problems and what I learned**
+- Claude Code found that `world:init` would have leaked the internal `moved` flag to browsers. It now copies only `{ id, name, x, y, dir }`.
+- The old disconnect code removed the player but never sent `player:left`. Fixed.
+- JSON has no NaN, so Socket.io turns a NaN into `null`. The check still rejects it, because null isn't a number.
+- The tests expect the server to already be running (`npm run dev`).
+
+**To do in Task 6**
+- Also set `moved` when a player joins, and clear it after each tick. Otherwise someone who joins and stands still is never saved.
