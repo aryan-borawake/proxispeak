@@ -35,3 +35,13 @@
   - Added synthetic stream generators to allow testing with pure harmonic frequencies without relying on external mp3 assets.
   - Built the Task 7 multi-peer simulation: Alice (C4), Bob (E4), and Charlie (G4) orbiting at different distances. Verified that all 3 audio streams play concurrently with correct independent volume and stereo panning.
 - **Viva Note:** `setTargetAtTime` uses exponential approach to smoothly transition audio parameter values over time, preventing zipper noise.
+
+---
+
+### Day 4 (21 Oct): Task 8 — Mic Level Meter & Audio Controls (Integration #1)
+- **What I built:**
+  - Implemented `createMicMeter(stream)` in `micMeter.js` using a Web Audio `AnalyserNode` (`fftSize = 256`) to measure real-time microphone RMS volume (0.0 to 1.0).
+  - Built `AudioControls.jsx` providing a visual live meter bar that responds when the user talks and a clean mute toggle button.
+  - Wired the component into `AudioLab.jsx` with microphone permission handling.
+- **Viva Note:** The mute button toggles `track.enabled = false` on the local `MediaStreamTrack`, stopping audio transmission at the source without tearing down the WebRTC connection.
+
