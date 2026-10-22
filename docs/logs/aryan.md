@@ -71,3 +71,10 @@ Module 1: Signaling + WebRTC · Branch `aryan` · Team lead
 
 **To do in Task 6**
 - Also set `moved` when a player joins, and clear it after each tick. Otherwise someone who joins and stands still is never saved.
+
+## 22 Oct 2026 — Task 4: browser connection (net)
+- Built client/src/net/index.js: one Socket.io connection shared by the whole page, with connect, sendMove, sendSignal and five on… listeners that each return an unsubscribe function.
+- connect() listens for world:init, server:error and connect_error before connecting, gives up after 5 s, and shares one promise so two quick clicks join only once.
+- The ?lab=rtc page joins with a name, lists everyone online, and moves me 10 px right; the other tab sees it within 100 ms.
+- Learned: the socket starts switched off (autoConnect false) so other modules can listen before anyone joins.
+- Notes for later: world:init has no direction for me (assumed 'down'); no auto-rejoin after a server restart (Task 11); VITE_SERVER_URL needs sorting before deploy.
