@@ -2,6 +2,30 @@
 
 Module 2: Geospatial Engine · Branch `pratik`
 
+## 22 Oct 2026 — Geospatial Engine Verification & Integration Readiness
+
+### Today's Learning
+- Reinforced how flat Cartesian 2D coordinates (`[x, y]`) on an HTML5 canvas map require MongoDB's `2d` spatial index with explicit bounds `{ min: 0, max: 4096 }` (`WORLD_MAX_PX`) rather than geographic `2dsphere`.
+- Learned how hysteresis thresholds prevent voice chat flapping: avatars initiate audio only when within 100 px (`EARSHOT_PX`) and disconnect once beyond 140 px (`DISCONNECT_PX`), maintaining stability in the 100–140 px buffer.
+- Understood how in-memory position caching paired with `{ loc: 1 }` field projections reduces database roundtrips, allowing 50 concurrent spatial queries to run under 10 ms (~8.96 ms measured).
+
+### Work Completed
+- Verified all Module 2 core implementations committed and pushed to `origin/pratik` (commit `60249d8`): `db.js`, `Position.js`, `geoEngine.js`, `peerChanges.js`, and `index.js`.
+- Confirmed deterministic test suite (`test-nearby.js`) passes all 16 tests covering known distance radii (50, 99, 101, 150 px), self-exclusion, room isolation, and peer change boundaries.
+- Re-verified MongoDB query plan via `.explain()`, proving that proximity queries execute through `GEO_NEAR_2D -> FETCH -> IXSCAN` on index `loc_2d_roomId_1` with zero full-table scans.
+- Confirmed spatial audit performance benchmark (`spatial-audit.js`) over 10 rounds of 50 parallel queries, achieving an average query latency of ~8.96 ms and full tick duration of ~15.15 ms.
+- Maintained clean repository boundaries: all changes confined to `server/geo/` and `docs/`, with zero modifications to shared contracts or other teammates' files.
+
+### Key Takeaways
+- Batching position updates into a single `bulkWrite` per 250 ms tick prevents database connection exhaustion and keeps write traffic predictable.
+- Combining MongoDB `$near` with exact Euclidean distance (`Math.hypot`) ensures accurate nearest-first player discovery on a flat grid.
+- Pure functions like `computePeerChanges` make complex state transition logic simple to test without database dependencies.
+
+### Next Steps
+- Coordinate with Person 1 (Aryan) to connect `createGeoEngine` into `server/index.js` (`attachSignaling(io, { geo })`).
+- Open the Integration #1 pull request from `pratik` into `dev` on GitHub.
+- Review upcoming Week 3 requirements for zone persistence (`models/Zone.js`) and `$geoWithin` meeting room boundaries.
+
 ## 21 Oct 2026 — Tasks 2–11: Core Geospatial Engine, Test Suite, and Spatial Audit
 
 **What I built**
