@@ -76,7 +76,7 @@ export function checkCollision(x, y, map, avatarSize = 32) {
   if (!collisionLayer) return false;
 
   const tileSize = map.tileSize;
-  
+
   // Check corners of the avatar bounding box
   const points = [
     { x: x, y: y },                           // Top-left
@@ -106,64 +106,23 @@ export function checkCollision(x, y, map, avatarSize = 32) {
  * Fallback visual structure mirroring your office layout design 
  * (Product Team desks, CX team room, Lounge, Cafeteria, Meeting Room).
  */
-function drawFallbackOffice(ctx, camera) {
-  const ox = -camera.x;
-  const oy = -camera.y;
+// function drawFallbackOffice(ctx, camera) {
+//   const ox = -camera.x;
+//   const oy = -camera.y;
 
-  // Main wooden flooring (Right & Top sections)
-  ctx.fillStyle = '#fce7cc';
-  ctx.fillRect(ox + 280, oy + 0, 720, 600);
+//   // Start with one simple rectangular office shell.
+//   const officeX = ox + 40;
+//   const officeY = oy + 40;
+//   const officeWidth = 920;
+//   const officeHeight = 780;
 
-  // Carpeted Lounge & Recreation Area (Center)
-  ctx.fillStyle = '#93c5fd';
-  ctx.fillRect(ox + 320, oy + 560, 400, 220);
+//   // ctx.fillStyle = '#475569';
+//   // ctx.fillRect(officeX, officeY, officeWidth, officeHeight);
 
-  // Private Office Rooms (Left column)
-  // 1. Conference Room (Top Left)
-  ctx.fillStyle = '#c7d2fe';
-  ctx.fillRect(ox + 0, oy + 0, 280, 260);
-  
-  // 2. Cafeteria / Breakout Room (Middle Left)
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(ox + 0, oy + 280, 280, 280);
+//   // ctx.fillStyle = '#f8fafc';
+//   // ctx.fillRect(officeX + 12, officeY + 12, officeWidth - 24, officeHeight - 24);
 
-  // 3. Library / Quiet Room (Bottom Left)
-  ctx.fillStyle = '#cbd5e1';
-  ctx.fillRect(ox + 0, oy + 580, 280, 280);
-
-  // --- Desks & Furniture Blocks ---
-  // Product Team Desks (Top Center)
-  drawDeskCluster(ctx, ox + 350, oy + 220, "Product Team");
-
-  // CX Team Desks (Bottom Right)
-  drawDeskCluster(ctx, ox + 740, oy + 540, "CX Team");
-
-  // Lounge Sofas & Coffee Table
-  ctx.fillStyle = '#fb923c'; // Sofa 1
-  ctx.fillRect(ox + 480, oy + 610, 90, 40);
-  ctx.fillStyle = '#fde047'; // Table
-  ctx.beginPath();
-  ctx.arc(ox + 525, oy + 690, 30, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-function drawDeskCluster(ctx, x, y, label) {
-  // Desks block
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(x, y, 260, 140);
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.strokeRect(x, y, 260, 140);
-
-  // Monitors & Gear placeholders
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(x + 20, y + 15, 40, 30);
-  ctx.fillRect(x + 110, y + 15, 40, 30);
-  ctx.fillRect(x + 200, y + 15, 40, 30);
-
-  // Team Label banner above cluster
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-  ctx.fillRect(x + 70, y - 25, 120, 20);
-  ctx.fillStyle = '#64748b';
-  ctx.font = '12px sans-serif';
-  ctx.fillText(label, x + 85, y - 11);
-}
+//   // ctx.strokeStyle = '#1e293b';
+//   // ctx.lineWidth = 8;
+//   // ctx.strokeRect(officeX, officeY, officeWidth, officeHeight);
+// }
