@@ -20,7 +20,7 @@
 ## Tue 20 Oct 2026 — Task 2: Canvas component & game loop with FPS counter
 
 **What I built**
-- Created `WorldCanvas.jsx` with an HTML5 `<canvas>` rendering element and configured `WorldLab.jsx` for isolated testing.
+- Created `WorldCanvas.jsx` with an HTML5 rendering element and configured `WorldLab.jsx` for isolated testing.
 - Built a 60 FPS game loop using `requestAnimationFrame`.
 - Added an on-screen FPS tracker in the corner to measure rendering performance.
 
@@ -81,25 +81,30 @@
 - Find free office tileset assets and configure Tiled map editor for our 6 office zones.
 ---
 
-## Fri 23 Oct 2026 — Task 4: Office map setup and collision design
+## Fri 23 Oct 2026 — Task 4: Office map setup and Tiled layout design
 
 **What I built**
 - Integrated LimeZu's Modern Interiors 32x32 pixel tilesets (`Room_Builder_free_32x32.png` and `Interiors_free_32x32.png`) into `client/public/maps/`.
 - Updated `client/public/assets/CREDITS.md` with source links, author attribution, and non-commercial license documentation.
-- Configured Tiled Map Editor with a 32x32 orthogonal grid and embedded tilesets matching our project contract.
-- Structured the map layers into `floor`, `furniture`, and `collision` to support our 6 office zones (Lobby, Lounge, Booth, Open Desks, Meeting Room, Stage).
+- Created our initial Tiled project `office.tmx` configured with a 35×25 orthogonal grid (32×32 px tile size) and both embedded tilesets.
+- Designed the architectural blueprint for our 6 office zones (Lobby spawn area, Open Desks, Meeting Room, Stage, Lounge, and Private Phone Booths).
+- Started painting the office floor and walls in Tiled, implementing multi-tile corner selection and directional furniture placement.
 
 **How it works (in my own words)**
-- The office is drawn on an HTML5 Canvas using data from `office.json`, not by creating separate React elements for every wall and desk.
-- The `floor` layer paints the ground, the `furniture` layer places interior items, and the `collision` layer acts as an obstacle map.
-- In code, collision works by converting pixel coordinates into grid coordinates. Any tile on the `collision` layer with a value greater than 0 blocks walking. We test the X and Y movement separately so the avatar can slide smoothly along walls instead of freezing.
+- The office is built on a 32×32 pixel grid matching our project's `TILE_SIZE` constant.
+- The layout is structured across separate layers: `floor` for the base flooring, `furniture` for walls, desks, and objects, and `collision` for physical barriers. Keeping furniture on a separate layer allows editing walls without erasing the floor underneath.
+- When painting walls, selecting a multi-tile block (e.g. 2×2 or 3×3 in the tileset) stamps down complete corner pieces with top edges and vertical wall faces, giving the office realistic top-down depth.
+- Spacing between workstation clusters is set to at least 3 tiles (~100 px), ensuring teams at different desk pods remain outside each other's `EARSHOT_PX` hearing range.
 
 **Problems and how I fixed them**
-- Kenney didn't have an asset pack named "Office", so we sourced LimeZu's free Modern Interiors pack which already comes in 32x32 px tiles, perfectly matching our `TILE_SIZE` constant. Added proper attribution to `CREDITS.md`.
+- Kenney didn't have a dedicated "Office" asset pack, so we sourced LimeZu's free Modern Interiors pack which natively provides 32×32 px tiles.
+- Learned how to properly construct corners without distorted edges by understanding the 3×3 grid pattern and using pre-drawn directional furniture tiles rather than flipping them upside down.
 
 **What I learned**
-- React only serves as the shell holding `<canvas>`; the actual 60 FPS rendering and movement happen via standard 2D Canvas JavaScript.
-- How bounding box collision checks all four corners of a character, and how to set layer opacity in Tiled to easily paint collision barriers over furniture.
+- How top-down 2.5D wall height (top ledge + vertical face) creates depth in 2D pixel art.
+- How tile rotation (`Z`, `Shift+Z`) and flipping (`X`, `Y`) work in Tiled, and why pre-drawn tiles preserve natural lighting and shadows.
+- How spatial audio distance constraints (`EARSHOT_PX = 100`, `DISCONNECT_PX = 140`) dictate corridor widths and desk cluster spacing.
 
 **Tomorrow**
-- Finish painting the 6 rooms in Tiled, export the completed `office.json`, and verify tileset rendering and wall collision in `map.js`.
+- Finish painting furniture and doors for all 6 rooms, paint the `collision` layer, and export the map as `office.json`.
+---
