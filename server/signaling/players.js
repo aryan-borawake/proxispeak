@@ -6,18 +6,25 @@
 // players in a JavaScript Map. MongoDB is only touched in the 250 ms proximity tick (later).
 //
 // The Map stores pairs:  socket id  →  { id, name, x, y, dir }
-// Example entry:         'kX9a2bQ'  →  { id: 'kX9a2bQ', name: 'Riya', x: 200, y: 200, dir: 'down' }
-// After their first move a player also has `moved: true` (see updatePlayerPosition below).
+// Example entry:         'kX9a2bQ'  →  { id: 'kX9a2bQ', name: 'Riya', x: 200, y: 200, dir: 'down', moved: true }
+//
+// `moved` is a server-only flag: "this player is new or moved since the last proximity tick".
+// It is never sent to browsers (index.js copies only { id, name, x, y, dir } into messages).
 
 const players = new Map();
 
 /**
  * Add a new player to the store.
+ *
+ * A new player starts with `moved = true`. Why? The proximity tick (tick.js) only checks
+ * players whose flag is true. If we waited for a first move, two people who join at the
+ * same spawn point and stand still would never be connected, even though they are 0 px apart.
+ *
  * @param {{ id: string, name: string, x: number, y: number, dir: string }} player
  * @returns {object} the player that was stored
  */
 export function addPlayer({ id, name, x, y, dir }) {
-  const player = { id, name, x, y, dir };
+  const player = { id, name, x, y, dir, moved: true };
   players.set(id, player);
   return player;
 }
@@ -30,7 +37,7 @@ export function addPlayer({ id, name, x, y, dir }) {
  * (e.g. { x, y, dir, name: 'Hacker' }), they never reach the store.
  *
  * `moved = true` marks "this player moved since the last proximity tick".
- * The proximity tick (Task 6) will read it and set it back to false.
+ * The proximity tick (tick.js) reads it and sets it back to false.
  *
  * @param {string} id - the player's socket id
  * @param {{ x: number, y: number, dir: string }} position - already validated

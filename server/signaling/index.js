@@ -4,8 +4,8 @@
 // Exact names and payloads: CONTRACTS.md. Plan: docs/briefs/module-1-signaling-webrtc.md.
 //
 // Built so far: join and disconnect (Task 2); MOVE, the PLAYERS_STATE broadcast and
-// PLAYER_LEFT (Task 3).
-// Still to come: proximity tick (Task 6), SIGNAL note passing (Task 8).
+// PLAYER_LEFT (Task 3); the proximity tick with a fake "who is near" check (Task 6, tick.js).
+// Still to come: SIGNAL note passing (Task 8), Person 2's geo engine (Task 9).
 
 import { EVENTS } from '../../shared/events.js';
 import {
@@ -17,6 +17,7 @@ import {
   WORLD_MAX_PX,
 } from '../../shared/constants.js';
 import { addPlayer, removePlayer, getPlayer, listPlayers, updatePlayerPosition } from './players.js';
+import { startProximityTick, removeFromPeers } from './tick.js';
 
 // New players face down (towards the screen) when they appear. One of DIRECTIONS.
 const SPAWN_DIR = 'down';
@@ -33,7 +34,7 @@ const SPAWN_DIR = 'down';
  * @returns {void}
  */
 export function attachSignaling(io, { geo }) {
-  // `geo` is not used yet. It is plugged in at Task 9.
+  // `geo` is not used yet. It is plugged in at Task 9 (until then tick.js uses fakeNearby.js).
 
   // This runs once for every browser that connects.
   io.on('connection', (socket) => {
@@ -54,6 +55,9 @@ export function attachSignaling(io, { geo }) {
 
   // One timer for the whole server (not one per player), started once, here.
   startStateBroadcast(io);
+
+  // The "who is near whom?" check, every PROXIMITY_TICK_MS (250 ms). Also one timer, started once.
+  startProximityTick(io);
 
   console.log('[signaling] ready: listening for joins and moves');
 }
@@ -216,6 +220,10 @@ function handleDisconnect(io, socket) {
     console.log(`[signaling] socket disconnected before joining: ${socket.id}`);
     return;
   }
+
+  // Take them out of every peer set, and tell each former peer "left" (peers:update),
+  // so their browsers close the voice connection.
+  removeFromPeers(io, socket.id);
 
   // The leaving socket has already left the room, so "everyone in the room" means everyone else.
   io.to(DEFAULT_ROOM).emit(EVENTS.PLAYER_LEFT, { id: socket.id });
