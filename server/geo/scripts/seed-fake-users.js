@@ -90,9 +90,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 
   connectDb(mongoUri)
     .then(() => seedFakeUsers({ count, clean }))
-    .then(() => disconnectDb())
     .catch((err) => {
       console.error('[geo] Seeding failed:', err);
-      process.exit(1);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await disconnectDb();
     });
 }

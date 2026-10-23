@@ -21,9 +21,20 @@ const positionSchema = new mongoose.Schema(
       required: true,
       validate: {
         validator: function (v) {
-          return Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number';
+          return (
+            Array.isArray(v) &&
+            v.length === 2 &&
+            typeof v[0] === 'number' &&
+            typeof v[1] === 'number' &&
+            Number.isFinite(v[0]) &&
+            Number.isFinite(v[1]) &&
+            v[0] >= 0 &&
+            v[0] <= WORLD_MAX_PX &&
+            v[1] >= 0 &&
+            v[1] <= WORLD_MAX_PX
+          );
         },
-        message: 'loc must be an array of two numbers [x, y]',
+        message: `loc must be an array of two finite numbers [x, y] between 0 and ${WORLD_MAX_PX}`,
       },
     },
     updatedAt: {

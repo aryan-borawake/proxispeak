@@ -6,7 +6,7 @@
 // Exact contracts: CONTRACTS.md (Section 6) and docs/briefs/module-2-geospatial.md.
 
 import { Position } from './models/Position.js';
-import { DEFAULT_ROOM } from '../../shared/constants.js';
+import { DEFAULT_ROOM, WORLD_MAX_PX } from '../../shared/constants.js';
 
 /**
  * Creates a geospatial engine instance for a specific room.
@@ -43,17 +43,29 @@ export function createGeoEngine({ roomId = DEFAULT_ROOM } = {}) {
         return;
       }
 
-      // Filter and validate valid coordinates
+      // Filter and validate valid coordinates within [0, WORLD_MAX_PX]
       const validOps = [];
+      const validUsers = [];
       const now = new Date();
 
       for (const u of users) {
-        if (!u || u.id == null || typeof u.x !== 'number' || typeof u.y !== 'number') {
+        if (
+          !u ||
+          u.id == null ||
+          typeof u.x !== 'number' ||
+          typeof u.y !== 'number' ||
+          !Number.isFinite(u.x) ||
+          !Number.isFinite(u.y) ||
+          u.x < 0 ||
+          u.x > WORLD_MAX_PX ||
+          u.y < 0 ||
+          u.y > WORLD_MAX_PX
+        ) {
           continue;
         }
 
         const idStr = String(u.id);
-        positionCache.set(idStr, [u.x, u.y]);
+        validUsers.push({ id: idStr, loc: [u.x, u.y] });
 
         validOps.push({
           updateOne: {
@@ -76,6 +88,10 @@ export function createGeoEngine({ roomId = DEFAULT_ROOM } = {}) {
 
       try {
         await Position.bulkWrite(validOps, { ordered: false });
+        // Update cache only after database write succeeds
+        for (const u of validUsers) {
+          positionCache.set(u.id, u.loc);
+        }
       } catch (err) {
         console.error(`[geo] upsertPositions error in room ${roomId}:`, err.message);
         throw err;
@@ -95,7 +111,7 @@ export function createGeoEngine({ roomId = DEFAULT_ROOM } = {}) {
       if (!userId) {
         return [];
       }
-      if (typeof maxDistancePx !== 'number' || maxDistancePx <= 0) {
+      if (typeof maxDistancePx !== 'number' || !Number.isFinite(maxDistancePx) || maxDistancePx <= 0) {
         return [];
       }
 

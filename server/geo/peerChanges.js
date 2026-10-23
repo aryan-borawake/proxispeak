@@ -29,7 +29,7 @@ export function computePeerChanges(
   const nearbyMap = new Map();
 
   for (const item of nearby) {
-    if (item && item.id != null) {
+    if (item && item.id != null && Number.isFinite(item.distance)) {
       nearbyMap.set(String(item.id), Number(item.distance));
     }
   }

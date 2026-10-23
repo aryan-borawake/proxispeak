@@ -26,10 +26,91 @@ const AUDIT_ROOM = 'spatial-audit-room';
 const TARGET_LATENCY_MS = 20;
 
 /**
+ * Recursively searches an execution plan tree for a stage matching the target stage name.
+ * Handles standard MongoDB plan nodes and queryPlan wrappers without traversing
+ * arbitrary unrelated object fields.
+ *
+ * @param {object|null|undefined} node - A stage node or plan wrapper
+ * @param {string} targetStage - Name of the stage to find (e.g. 'GEO_NEAR_2D')
+ * @returns {object|null} The matching node or null if not found
+ */
+function findStage(node, targetStage) {
+  if (!node || typeof node !== 'object') {
+    return null;
+  }
+
+  // Direct match on stage name
+  if (node.stage === targetStage) {
+    return node;
+  }
+
+  // Traversal for queryPlan wrapper (e.g. winningPlan.queryPlan or wrapper objects)
+  if (node.queryPlan && typeof node.queryPlan === 'object') {
+    const found = findStage(node.queryPlan, targetStage);
+    if (found) return found;
+  }
+
+  // Traversal for executionStages wrapper
+  if (node.executionStages && typeof node.executionStages === 'object') {
+    const found = findStage(node.executionStages, targetStage);
+    if (found) return found;
+  }
+
+  // Traversal for standard single child inputStage
+  if (node.inputStage && typeof node.inputStage === 'object') {
+    const found = findStage(node.inputStage, targetStage);
+    if (found) return found;
+  }
+
+  // Traversal for array of child stages
+  if (Array.isArray(node.inputStages)) {
+    for (const child of node.inputStages) {
+      const found = findStage(child, targetStage);
+      if (found) return found;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extracts indexName from a stage node or its immediate plan children.
+ *
+ * @param {object|null|undefined} stageNode
+ * @returns {string|null}
+ */
+function getStageIndexName(stageNode) {
+  if (!stageNode || typeof stageNode !== 'object') {
+    return null;
+  }
+  if (typeof stageNode.indexName === 'string') {
+    return stageNode.indexName;
+  }
+  if (stageNode.queryPlan && typeof stageNode.queryPlan.indexName === 'string') {
+    return stageNode.queryPlan.indexName;
+  }
+  if (stageNode.inputStage && typeof stageNode.inputStage === 'object') {
+    if (typeof stageNode.inputStage.indexName === 'string') {
+      return stageNode.inputStage.indexName;
+    }
+    if (
+      stageNode.inputStage.inputStage &&
+      typeof stageNode.inputStage.inputStage.indexName === 'string'
+    ) {
+      return stageNode.inputStage.inputStage.indexName;
+    }
+  }
+  return null;
+}
+
+/**
  * Runs the .explain() check to prove the 2D index is utilized.
  */
 async function inspectExecutionPlan() {
   console.log('\n--- Step 1: Query Plan Inspection (.explain()) ---');
+
+  const EXPECTED_STAGE = 'GEO_NEAR_2D';
+  const EXPECTED_INDEX = 'loc_2d_roomId_1';
 
   const sampleCoord = [500, 500];
   const query = Position.find({
@@ -42,26 +123,70 @@ async function inspectExecutionPlan() {
   });
 
   const explainResult = await query.explain('executionStats');
-  const planJson = JSON.stringify(explainResult, null, 2);
 
-  // Look for GEO_NEAR_2D in execution stages or query planner
-  const uses2dIndex =
-    planJson.includes('GEO_NEAR_2D') ||
-    planJson.includes('loc_2d_roomId_1') ||
-    explainResult.queryPlanner?.winningPlan?.stage === 'GEO_NEAR_2D' ||
-    explainResult.executionStats?.executionStages?.stage === 'GEO_NEAR_2D';
+  // Inspect both queryPlanner and executionStats trees independently
+  const geoStagePlanner = findStage(explainResult.queryPlanner?.winningPlan, EXPECTED_STAGE);
+  const geoStageExec = findStage(explainResult.executionStats?.executionStages, EXPECTED_STAGE);
 
-  const stage = explainResult.queryPlanner?.winningPlan?.stage || 'GEO_NEAR_2D';
-  const execStage = explainResult.executionStats?.executionStages?.stage || 'FETCH';
+  const plannerIndexName = getStageIndexName(geoStagePlanner);
+  const execIndexName = getStageIndexName(geoStageExec);
 
-  console.log(`Planner Stage:      ${stage}`);
+  // Independently verify whether each candidate pairs GEO_NEAR_2D with exact loc_2d_roomId_1
+  const isPlannerVerified = Boolean(
+    geoStagePlanner &&
+    geoStagePlanner.stage === EXPECTED_STAGE &&
+    plannerIndexName === EXPECTED_INDEX
+  );
+
+  const isExecVerified = Boolean(
+    geoStageExec &&
+    geoStageExec.stage === EXPECTED_STAGE &&
+    execIndexName === EXPECTED_INDEX
+  );
+
+  // Set uses2dIndex to true ONLY when executionStages contains verified GEO_NEAR_2D index
+  const uses2dIndex = isExecVerified;
+
+  let verifiedGeoStage = null;
+  let actualIndexName = null;
+
+  if (isExecVerified) {
+    verifiedGeoStage = geoStageExec;
+    actualIndexName = execIndexName;
+  } else if (isPlannerVerified) {
+    verifiedGeoStage = geoStagePlanner;
+    actualIndexName = plannerIndexName;
+  } else {
+    verifiedGeoStage = geoStageExec || geoStagePlanner;
+    actualIndexName = execIndexName || plannerIndexName || null;
+  }
+
+  // Do not fabricate fallback stage names; report UNKNOWN if missing
+  const plannerStage = explainResult.queryPlanner?.winningPlan?.stage || 'UNKNOWN';
+  const execStage = explainResult.executionStats?.executionStages?.stage || 'UNKNOWN';
+
+  let stageDescription;
+  if (uses2dIndex) {
+    stageDescription = `${plannerStage} -> ${EXPECTED_STAGE} (index: ${actualIndexName})`;
+  } else if (isPlannerVerified) {
+    stageDescription = `${plannerStage} -> ${EXPECTED_STAGE} (planner verified, execution unverified)`;
+  } else if (verifiedGeoStage) {
+    stageDescription = `${plannerStage} -> ${verifiedGeoStage.stage} (unexpected index: ${actualIndexName || 'NONE'})`;
+  } else {
+    stageDescription = plannerStage !== 'UNKNOWN' ? `${plannerStage} (${execStage})` : 'UNKNOWN';
+  }
+
+  console.log(`Planner Stage:      ${plannerStage}`);
   console.log(`Execution Stage:    ${execStage}`);
-  console.log(`Index Utilized:     ${uses2dIndex ? 'YES (GEO_NEAR_2D / loc_2d_roomId_1)' : 'NO'}`);
+  console.log(`Spatial Stage:      ${verifiedGeoStage?.stage || 'NONE'}`);
+  console.log(`Index Name:         ${actualIndexName || 'NONE'}`);
+  console.log(`Index Utilized:     ${uses2dIndex ? `YES (${EXPECTED_STAGE} / ${EXPECTED_INDEX})` : 'NO'}`);
   console.log(`Total Docs Examined: ${explainResult.executionStats?.totalDocsExamined ?? 0}`);
 
   return {
     uses2dIndex,
-    stage: `${stage} (${execStage})`,
+    stage: stageDescription,
+    indexName: actualIndexName || 'NONE',
     rawExplain: explainResult,
   };
 }
@@ -146,12 +271,19 @@ async function runBenchmark(geo, users) {
  * Formats results into markdown table and saves to docs/geo-audit.md.
  */
 async function saveAuditReport(explainData, roundResults) {
-  const overallAvg =
-    roundResults.reduce((sum, r) => sum + r.avgQueryTime, 0) / roundResults.length;
-  const overallMax = Math.max(...roundResults.map((r) => r.maxQueryTime));
-  const overallAvgTick =
-    roundResults.reduce((sum, r) => sum + r.tickDuration, 0) / roundResults.length;
-  const allPassed = roundResults.every((r) => r.targetMet);
+  const hasRounds = roundResults.length > 0;
+  const overallAvg = hasRounds
+    ? roundResults.reduce((sum, r) => sum + r.avgQueryTime, 0) / roundResults.length
+    : 0;
+  const overallMax = hasRounds ? Math.max(...roundResults.map((r) => r.maxQueryTime)) : 0;
+  const overallAvgTick = hasRounds
+    ? roundResults.reduce((sum, r) => sum + r.tickDuration, 0) / roundResults.length
+    : 0;
+  const allPassed = Boolean(explainData.uses2dIndex) && hasRounds && roundResults.every((r) => r.targetMet);
+
+  const rawExplainJson = explainData.rawExplain
+    ? JSON.stringify(explainData.rawExplain, null, 2)
+    : '{}';
 
   const markdownContent = `# ProxiSpeak — Geospatial Engine Spatial Audit
 
@@ -163,10 +295,24 @@ async function saveAuditReport(explainData, roundResults) {
 
 ## 1. Index Proof (.explain())
 
-- **Index Name:** \`loc_2d_roomId_1\`
+- **Index Name:** \`${explainData.indexName}\`
 - **Index Type:** 2D flat-coordinate index bounded to \`{ min: 0, max: ${WORLD_MAX_PX} }\`
 - **Winning Plan Stage:** \`${explainData.stage}\`
-- **Proof:** MongoDB execution plan shows \`${explainData.stage}\`, confirming queries execute against spatial index bounds instead of performing full-collection scans (\`COLLSCAN\`).
+- **Index Utilized:** \`${explainData.uses2dIndex ? 'YES' : 'NO'}\`
+- **Proof:** ${
+    explainData.uses2dIndex
+      ? `MongoDB execution plan shows \`${explainData.stage}\`, confirming queries execute against spatial index bounds instead of performing full-collection scans (\`COLLSCAN\`).`
+      : `FAILED: Execution plan did not verify expected stage GEO_NEAR_2D with index loc_2d_roomId_1.`
+  }
+
+<details>
+<summary>Raw Execution Plan (.explain('executionStats'))</summary>
+
+\`\`\`json
+${rawExplainJson}
+\`\`\`
+
+</details>
 
 ---
 
@@ -174,16 +320,20 @@ async function saveAuditReport(explainData, roundResults) {
 
 | Round | Min Latency (ms) | Avg Latency (ms) | Max Latency (ms) | Full Tick (Batch + 50 Qs) | Target (< 20 ms) |
 | :---: | :---: | :---: | :---: | :---: | :---: |
-${roundResults
-  .map(
-    (r) =>
-      `| Round ${r.round} | ${r.minQueryTime.toFixed(2)} ms | ${r.avgQueryTime.toFixed(
-        2
-      )} ms | ${r.maxQueryTime.toFixed(2)} ms | ${r.tickDuration.toFixed(2)} ms | ${
-        r.targetMet ? '✅ PASS' : '❌ FAIL'
-      } |`
-  )
-  .join('\n')}
+${
+  hasRounds
+    ? roundResults
+        .map(
+          (r) =>
+            `| Round ${r.round} | ${r.minQueryTime.toFixed(2)} ms | ${r.avgQueryTime.toFixed(
+              2
+            )} ms | ${r.maxQueryTime.toFixed(2)} ms | ${r.tickDuration.toFixed(2)} ms | ${
+              r.targetMet ? '✅ PASS' : '❌ FAIL'
+            } |`
+        )
+        .join('\n')
+    : '| None | N/A | N/A | N/A | N/A | ❌ NOT RUN |'
+}
 
 ---
 
@@ -192,7 +342,13 @@ ${roundResults
 - **Overall Average Query Latency:** **${overallAvg.toFixed(2)} ms**
 - **Peak Query Latency:** **${overallMax.toFixed(2)} ms**
 - **Average Full Tick Duration:** **${overallAvgTick.toFixed(2)} ms** (well within ${250} ms tick budget)
-- **Verdict:** **${allPassed ? 'ALL QUERIES PASSED (< 20 ms)' : 'TARGET EXCEEDED'}**
+- **Verdict:** **${
+    allPassed
+      ? 'ALL QUERIES PASSED (< 20 ms)'
+      : !explainData.uses2dIndex
+      ? 'AUDIT FAILED (Index not proven)'
+      : 'TARGET EXCEEDED'
+  }**
 
 *Report generated automatically by \`server/geo/scripts/spatial-audit.js\`.*
 `;
@@ -217,6 +373,14 @@ export async function runSpatialAudit() {
 
   try {
     const explainData = await inspectExecutionPlan();
+    if (!explainData.uses2dIndex) {
+      console.error(
+        '\n[geo] AUDIT FAILED: Expected 2D index "loc_2d_roomId_1" with stage "GEO_NEAR_2D" was not proven in execution plan.'
+      );
+      await saveAuditReport(explainData, []);
+      return false;
+    }
+
     const users = await seedAuditUsers(geo);
     const roundResults = await runBenchmark(geo, users);
 
@@ -255,12 +419,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   connectDb(mongoUri)
     .then(() => runSpatialAudit())
     .then((success) => {
-      return disconnectDb().then(() => {
-        process.exit(success ? 0 : 1);
-      });
+      process.exitCode = success ? 0 : 1;
     })
     .catch((err) => {
       console.error('[geo] Spatial audit failed with error:', err);
-      process.exit(1);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await disconnectDb();
     });
 }
