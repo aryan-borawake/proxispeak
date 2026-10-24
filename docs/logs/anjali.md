@@ -107,4 +107,29 @@
 
 **Tomorrow**
 - Finish painting furniture and doors for all 6 rooms, paint the `collision` layer, and export the map as `office.json`.
+
 ---
+
+## Sat 24 Oct 2026 — Task 4: Upper office wing construction & multi-layer decoration
+
+**What I built**
+- Constructed the upper wing of the office layout (Rows 0 to 9) in `office.tmx` using a 4-layer architecture: `Floor`, `Walls`, `decorations_wall_lobby`, and `decorations 2_wall_lobby`.
+- Framed out the structural walls and dividing barriers for the **Lobby** (cols 0–7), the central **Meeting Room** (cols 7–21), and the **Stage** (cols 26–34).
+- Built 3-tile wide doorways along the bottom wall (Row 9) for each room to ensure smooth entry and exit.
+- Layered vertical wall accents, baseboards, and trims on dedicated decoration layers so they sit seamlessly over the wall surfaces.
+
+**How it works (in my own words)**
+- Each cell on a tile layer can only store a single tile ID. To place trims, baseboards, or hanging objects on a wall without replacing the underlying wall graphic, we stack separate decoration layers on top.
+- Doorways are designed with 3 empty tiles ($\approx 96\text{ px}$) so avatars have plenty of clearance and do not snag on wall collision boundaries when walking in and out.
+- The `Floor` layer remains locked to protect the base ground tiles from accidental modification while editing upper layers.
+
+**Problems and how I fixed them**
+- Encountered how tile overwriting works when trying to place decorative trims over walls; solved this by introducing dedicated decoration layers stacked above `Walls`.
+- Handled layer switching to erase test strokes with the Eraser tool (`E`) without disturbing the locked floor layer underneath.
+
+**What I learned**
+- How multi-layer stacking works in 2D level design to achieve visual depth without flattening assets into a single layer.
+- The importance of generous doorway sizing (at least 2–3 tiles) for 2D game navigation.
+
+**Tomorrow**
+- Clear out the open floor in the lower half, design the Open Desks, Phone Booths, and Lounge, and paint the solid `collision` layer.
