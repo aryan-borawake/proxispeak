@@ -78,3 +78,15 @@ Module 1: Signaling + WebRTC · Branch `aryan` · Team lead
 - The ?lab=rtc page joins with a name, lists everyone online, and moves me 10 px right; the other tab sees it within 100 ms.
 - Learned: the socket starts switched off (autoConnect false) so other modules can listen before anyone joins.
 - Notes for later: world:init has no direction for me (assumed 'down'); no auto-rejoin after a server restart (Task 11); VITE_SERVER_URL needs sorting before deploy.
+
+## 23 Oct 2026 — Task 6: proximity tick with fake nearby
+- Every 250 ms the server finds players who moved, asks fakeNearby.js who is within 140 px, and uses computePeerChanges (connect at 100 px, disconnect beyond 140 px) to decide who entered and who left.
+- Peer sets are symmetric: if A hears B, B hears A. Each affected browser gets one peers:update per tick.
+- A player who joins now counts as moved, so someone who joins and stands still still gets matched (the fix noted in Task 3).
+- On disconnect, former peers get a left message.
+- Learned: the 100/140 gap stops flicker. At 130 px a connected pair stays connected, but an unconnected pair does not connect.
+
+## 24 Oct 2026 — Task 5: signaling docs v1
+- Wrote docs/signaling.md: join, move, broadcast, leave, the browser net connection and (if built) the proximity tick, all in my own words from the code.
+- Checked the doc against the code. Where the code and CONTRACTS.md differ, I noted it.
+- Learned: explaining the 100 ms broadcast and the 100/140 px gap out loud is the best viva practice.
