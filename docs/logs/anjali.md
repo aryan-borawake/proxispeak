@@ -120,7 +120,7 @@
 
 **How it works (in my own words)**
 - Each cell on a tile layer can only store a single tile ID. To place trims, baseboards, or hanging objects on a wall without replacing the underlying wall graphic, we stack separate decoration layers on top.
-- Doorways are designed with 3 empty tiles ($\approx 96\text{ px}$) so avatars have plenty of clearance and do not snag on wall collision boundaries when walking in and out.
+- Doorways are designed with 3 empty tiles so avatars have plenty of clearance and do not snag on wall collision boundaries when walking in and out.
 - The `Floor` layer remains locked to protect the base ground tiles from accidental modification while editing upper layers.
 
 **Problems and how I fixed them**
@@ -133,3 +133,29 @@
 
 **Tomorrow**
 - Clear out the open floor in the lower half, design the Open Desks, Phone Booths, and Lounge, and paint the solid `collision` layer.
+
+---
+
+## Sun 25 Oct 2026 — Task 4: Lower office furniture placement & room furnishing
+
+**What I built**
+- Extended `office.tmx` by adding dedicated furniture and props layers (`furniture_layer_1`, `office_elements_1`, and `Tile Layer 7`).
+- Built the layout for the lower office wing: Open Desks workstation pods, private Phone Booths, and the relaxation Lounge area.
+- Positioned desks, chairs, laptops, and office plants, ensuring paths between furniture are at least 2 tiles wide (~64 px) so players can walk through without getting stuck.
+- Aligned desk clusters with spatial audio limits in mind so colleagues talking at neighboring desks don't accidentally overhear each other unless they walk closer.
+
+**How it works (in my own words)**
+- In top-down 2D games, objects that sit on top of each other (like a computer monitor sitting on a desk, or a coffee mug on a table) need their own layer. If we put them on the same layer, the desk tile would get deleted when placing the monitor. By using `furniture_layer_1` for tables/chairs and `office_elements_1` for items on top of them, everything renders in the right order without disappearing.
+- We deliberately leave 2–3 empty tiles (~64–96 px) between desk rows. Since our character's collision box will be roughly one tile, narrow 1-tile gaps make moving around feel cramped and frustrating for keyboard controls.
+
+**Problems and how I fixed them**
+- Placing chairs behind desks initially caused visual glitches because parts of the desk legs overlapped the chair cushions. Solved this by separating base furniture into layers so desks naturally draw above chair backs where appropriate.
+- Sized the lounge and phone booths carefully to make sure private conversation zones have sufficient distance from the noisy open workspace.
+
+**What I learned**
+- What "Z-ordering" means in 2D game rendering: layers drawn later appear on top of layers drawn earlier (Floor -> Walls -> Base Furniture -> Prop Elements).
+- How level design directly impacts multiplayer gameplay: spacing out desks isn't just about visuals, it prevents WebRTC spatial audio from creating audio clutter between desk pods.
+
+**Tomorrow**
+- Paint the solid `collision` layer in Tiled, export the finished map to `client/public/maps/office.json`, and verify collision checking in `map.js`.
+
