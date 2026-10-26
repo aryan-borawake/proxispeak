@@ -1,20 +1,46 @@
 // client/src/world/WorldCanvas.jsx — Person 3
 import React, { useEffect, useRef, useState } from 'react';
 import { loadOfficeMap, drawMap, checkCollision } from './map';
+import { MOVE_SEND_HZ, EARSHOT_PX } from '@shared/constants.js';
 
-export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug }) {
+export function WorldCanvas({ net, selfId = 'self', spawn, initialPlayers = [], onFrame, debug }) {
   const canvasRef = useRef(null);
   const [map, setMap] = useState(null);
 
   // Player state managed via refs to avoid 60fps React state re-render bottlenecks
   const playerRef = useRef({
-    x: spawn?.x || 320,
-    y: spawn?.y || 320,
+    x: spawn?.x || 150,
+    y: spawn?.y || 150,
     speed: 3,
-    dir: 'down'
+    dir: 'down',
   });
 
+  // Track other players (bots or remote peers)
+  const othersRef = useRef(new Map());
+
+  // Throttled position sending tracking
+  const lastSentRef = useRef({ time: 0, x: 0, y: 0, dir: 'down' });
+
   const keysRef = useRef({});
+
+  // Populate initial players if provided
+  useEffect(() => {
+    if (Array.isArray(initialPlayers)) {
+      initialPlayers.forEach((p) => {
+        if (p.id !== selfId) {
+          othersRef.current.set(p.id, {
+            id: p.id,
+            name: p.name || `Player ${p.id}`,
+            x: p.x || 200,
+            y: p.y || 200,
+            targetX: p.x || 200,
+            targetY: p.y || 200,
+            dir: p.dir || 'down',
+          });
+        }
+      });
+    }
+  }, [initialPlayers, selfId]);
 
   // Load map metadata on mount
   useEffect(() => {
@@ -22,6 +48,64 @@ export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug
       setMap(loadedMap);
     });
   }, []);
+
+  // Listen to network events (real server or fakeNet)
+  useEffect(() => {
+    if (!net) return;
+
+    // Handle players state broadcast (10x a second)
+    const unsubState = net.onPlayersState?.((state) => {
+      if (!state || !Array.isArray(state.players)) return;
+
+      state.players.forEach((p) => {
+        if (p.id === selfId) return; // Don't overwrite local player
+
+        const existing = othersRef.current.get(p.id);
+        if (existing) {
+          existing.targetX = p.x;
+          existing.targetY = p.y;
+          existing.dir = p.dir || existing.dir;
+          if (p.name) existing.name = p.name;
+        } else {
+          othersRef.current.set(p.id, {
+            id: p.id,
+            name: p.name || `Player ${p.id}`,
+            x: p.x,
+            y: p.y,
+            targetX: p.x,
+            targetY: p.y,
+            dir: p.dir || 'down',
+          });
+        }
+      });
+    });
+
+    // Handle single player join
+    const unsubJoined = net.onPlayerJoined?.((p) => {
+      if (p.id !== selfId) {
+        othersRef.current.set(p.id, {
+          id: p.id,
+          name: p.name || `Player ${p.id}`,
+          x: p.x,
+          y: p.y,
+          targetX: p.x,
+          targetY: p.y,
+          dir: p.dir || 'down',
+        });
+      }
+    });
+
+    // Handle player leave
+    const unsubLeft = net.onPlayerLeft?.(({ id }) => {
+      othersRef.current.delete(id);
+    });
+
+    return () => {
+      unsubState?.();
+      unsubJoined?.();
+      unsubLeft?.();
+    };
+  }, [net, selfId]);
 
   // Keyboard input listeners
   useEffect(() => {
@@ -46,9 +130,9 @@ export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug
     let lastTime = performance.now();
     let frameCount = 0;
     let fps = 60;
+    const sendIntervalMs = 1000 / MOVE_SEND_HZ; // 100 ms
 
     const render = (currentTime) => {
-      const deltaTime = (currentTime - lastTime) / 1000;
       lastTime = currentTime;
 
       // FPS tracking
@@ -81,7 +165,7 @@ export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug
         const nextX = playerRef.current.x + dx * playerRef.current.speed;
         const nextY = playerRef.current.y + dy * playerRef.current.speed;
 
-        // Apply map collision bounds check
+        // Apply map collision checks (allowing sliding along walls)
         if (!checkCollision(nextX, playerRef.current.y, map)) {
           playerRef.current.x = nextX;
         }
@@ -89,21 +173,70 @@ export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug
           playerRef.current.y = nextY;
         }
 
-        // 2. Camera Viewport Follow Logic
+        // 2. Throttled Position Sending (MOVE_SEND_HZ = 10/sec, only when moved)
+        if (net && typeof net.sendMove === 'function') {
+          const hasMoved =
+            playerRef.current.x !== lastSentRef.current.x ||
+            playerRef.current.y !== lastSentRef.current.y ||
+            playerRef.current.dir !== lastSentRef.current.dir;
+
+          if (hasMoved && currentTime - lastSentRef.current.time >= sendIntervalMs) {
+            net.sendMove({
+              x: playerRef.current.x,
+              y: playerRef.current.y,
+              dir: playerRef.current.dir,
+            });
+            lastSentRef.current = {
+              time: currentTime,
+              x: playerRef.current.x,
+              y: playerRef.current.y,
+              dir: playerRef.current.dir,
+            };
+          }
+        }
+
+        // 3. Smooth Interpolation for Other Players / Bots
+        othersRef.current.forEach((other) => {
+          // Slide smoothly towards target position (approx 100ms interpolation)
+          other.x += (other.targetX - other.x) * 0.15;
+          other.y += (other.targetY - other.y) * 0.15;
+        });
+
+        // 4. Camera Viewport Follow Logic
         const camera = {
           x: playerRef.current.x - canvas.width / 2,
           y: playerRef.current.y - canvas.height / 2,
         };
 
-        // 3. Clear & Render Map Layout
+        // 5. Clear & Render Map Layout
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawMap(ctx, map, camera);
 
-        // 4. Draw Local Player Avatar
+        // 6. Draw Other Players / Bots
+        othersRef.current.forEach((other) => {
+          const ox = other.x - camera.x;
+          const oy = other.y - camera.y;
+
+          // Remote Avatar (Blue/Indigo circle)
+          ctx.fillStyle = '#6366f1';
+          ctx.beginPath();
+          ctx.arc(ox + 16, oy + 10, 16, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#1e1b4b';
+          ctx.fillRect(ox + 8, oy + 16, 16, 18);
+
+          // Name Tag above head
+          ctx.fillStyle = '#c7d2fe';
+          ctx.font = '11px sans-serif';
+          ctx.fillText(`● ${other.name}`, ox - 4, oy - 4);
+        });
+
+        // 7. Draw Local Player Avatar ("You")
         const renderX = playerRef.current.x - camera.x;
         const renderY = playerRef.current.y - camera.y;
 
-        ctx.fillStyle = '#22c55e'; // Green indicator for local user ("You")
+        ctx.fillStyle = '#22c55e'; // Green indicator for local user
         ctx.beginPath();
         ctx.arc(renderX + 16, renderY + 10, 18, 0, Math.PI * 2);
         ctx.fill();
@@ -116,24 +249,30 @@ export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug
         ctx.font = '11px sans-serif';
         ctx.fillText('● You', renderX - 4, renderY - 4);
 
-        // 5. Debug Overlay (FPS Counter & Earshot Range Circle)
+        // 8. Debug Overlay (FPS Counter & Earshot Range Circle)
         if (debug) {
           ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(renderX + 16, renderY + 20, 100, 0, Math.PI * 2); // 100px earshot boundary
+          ctx.arc(renderX + 16, renderY + 20, EARSHOT_PX, 0, Math.PI * 2); // 100px boundary
           ctx.stroke();
 
           ctx.fillStyle = '#38bdf8';
           ctx.font = '12px monospace';
           ctx.fillText(`FPS: ${fps}`, 15, 25);
+          ctx.fillText(`Active Peers: ${othersRef.current.size}`, 15, 42);
         }
 
-        // 6. Report position back upstream to parent/mixer via callback
+        // 9. Report positions upstream to audio mixer via callback
         if (typeof onFrame === 'function') {
           onFrame({
             self: { id: selfId, x: playerRef.current.x, y: playerRef.current.y },
-            others: []
+            others: Array.from(othersRef.current.values()).map((o) => ({
+              id: o.id,
+              x: o.x,
+              y: o.y,
+              blocked: false,
+            })),
           });
         }
       }
@@ -143,15 +282,15 @@ export function WorldCanvas({ net, selfId, spawn, initialPlayers, onFrame, debug
 
     animationFrameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [map, debug, selfId, onFrame]);
+  }, [map, debug, selfId, onFrame, net]);
 
   return (
-    <div style={{ textAlign: 'center' }}>
+    <div style={{ display: 'flex', justifyContent: 'center' }}>
       <canvas
         ref={canvasRef}
         width={900}
         height={600}
-        style={{ border: '3px solid #334155', borderRadius: '8px', background: '#090d16', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}
+        style={{ display: 'block', background: '#090d16' }}
       />
     </div>
   );

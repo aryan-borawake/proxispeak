@@ -1,16 +1,41 @@
 // client/src/world/map.js — Person 3
 // Handles loading and rendering the Tiled office map (office.json) and collisions.
 
+// Tiled bitwise flags for flipped and rotated tiles
+const FLIPPED_HORIZONTALLY_FLAG = 0x80000000;
+const FLIPPED_VERTICALLY_FLAG   = 0x40000000;
+const FLIPPED_DIAGONALLY_FLAG   = 0x20000000;
+
 /**
  * Loads the map data and tileset images.
- * In a standard Tiled setup, this fetches office.json and processes layers.
+ * Fetches office.json and preloads all embedded tileset images.
  */
-export async function loadOfficeMap() {
+export async function loadOfficeMap(mapPath = '/maps/office.json') {
   try {
-    const response = await fetch('/maps/office.json');
-    if (!response.ok) throw new Error('Failed to load office.json map data');
+    const response = await fetch(mapPath);
+    if (!response.ok) throw new Error(`Failed to load ${mapPath}`);
     const mapData = await response.json();
-    
+
+    // Preload all tileset images
+    const tilesetPromises = (mapData.tilesets || []).map((tileset) => {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.src = `/maps/${tileset.image}`;
+        img.onload = () => {
+          tileset.img = img;
+          resolve(tileset);
+        };
+        img.onerror = () => {
+          console.warn(`[world] Failed to load tileset image: /maps/${tileset.image}`);
+          tileset.img = null;
+          resolve(tileset);
+        };
+      });
+    });
+
+    await Promise.all(tilesetPromises);
+    console.log('[world] map and tilesets loaded successfully');
+
     return {
       width: mapData.width, // in tiles
       height: mapData.height,
@@ -19,36 +44,53 @@ export async function loadOfficeMap() {
       tilesets: mapData.tilesets,
     };
   } catch (err) {
-    console.warn('Map load fallback to procedural rendering until office.json is added:', err);
+    console.warn('[world] Map load error:', err);
     return null;
   }
 }
 
 /**
  * Renders the map layers onto the Canvas Context.
- * Draws floor first, then furniture/walls, ensuring proper depth sorting.
+ * Draws floor first, then walls and furniture with proper depth sorting.
  */
 export function drawMap(ctx, map, camera) {
-  if (!map || !map.layers) {
-    // Procedural fallback matching the screenshot structure if office.json isn't compiled yet
-    drawFallbackOffice(ctx, camera);
+  if (!map || !map.layers || !map.tilesets) {
     return;
   }
 
+  // Sort tilesets by firstgid descending so we can easily pick the matching one
+  const sortedTilesets = [...map.tilesets].sort((a, b) => b.firstgid - a.firstgid);
+
   map.layers.forEach((layer) => {
     if (layer.type === 'tilelayer' && layer.visible) {
-      // Loop through tile grid and draw individual tiles
       for (let y = 0; y < map.height; y++) {
         for (let x = 0; x < map.width; x++) {
           const tileIndex = x + y * map.width;
-          const tileId = layer.data[tileIndex];
-          
-          if (tileId === 0) continue; // Empty tile
+          const rawTileId = layer.data[tileIndex];
+
+          if (!rawTileId || rawTileId === 0) continue; // Empty tile
+
+          // Extract flip flags
+          const flippedH = (rawTileId & FLIPPED_HORIZONTALLY_FLAG) !== 0;
+          const flippedV = (rawTileId & FLIPPED_VERTICALLY_FLAG) !== 0;
+          const flippedD = (rawTileId & FLIPPED_DIAGONALLY_FLAG) !== 0;
+
+          // Clear flip flags to get the actual tile ID
+          const cleanTileId = rawTileId & 0x1FFFFFFF;
+
+          // Find which tileset this tile belongs to
+          const tileset = sortedTilesets.find((ts) => cleanTileId >= ts.firstgid && ts.img);
+          if (!tileset || !tileset.img) continue;
+
+          const localId = cleanTileId - tileset.firstgid;
+          const columns = tileset.columns || Math.floor(tileset.imagewidth / tileset.tilewidth);
+          const srcX = (localId % columns) * tileset.tilewidth;
+          const srcY = Math.floor(localId / columns) * tileset.tileheight;
 
           const screenX = x * map.tileSize - camera.x;
           const screenY = y * map.tileSize - camera.y;
 
-          // Culling: Skip drawing tiles outside the current viewport
+          // Culling: Skip tiles completely outside the viewport
           if (
             screenX + map.tileSize < 0 ||
             screenY + map.tileSize < 0 ||
@@ -58,8 +100,49 @@ export function drawMap(ctx, map, camera) {
             continue;
           }
 
-          // Render tile graphic (Assumes a single loaded tileset image for simplicity)
-          // ctx.drawImage(tilesetImage, srcX, srcY, tileSize, tileSize, screenX, screenY, tileSize, tileSize);
+          // Render with flip/rotation if needed
+          if (flippedH || flippedV || flippedD) {
+            let a = 1, b = 0, c = 0, d = 1;
+            if (flippedD) {
+              a = 0; b = 1; c = 1; d = 0;
+            }
+            if (flippedH) {
+              a = -a;
+              c = -c;
+            }
+            if (flippedV) {
+              b = -b;
+              d = -d;
+            }
+
+            ctx.save();
+            ctx.translate(screenX + map.tileSize / 2, screenY + map.tileSize / 2);
+            ctx.transform(a, b, c, d, 0, 0);
+            ctx.drawImage(
+              tileset.img,
+              srcX,
+              srcY,
+              tileset.tilewidth,
+              tileset.tileheight,
+              -map.tileSize / 2,
+              -map.tileSize / 2,
+              map.tileSize,
+              map.tileSize
+            );
+            ctx.restore();
+          } else {
+            ctx.drawImage(
+              tileset.img,
+              srcX,
+              srcY,
+              tileset.tilewidth,
+              tileset.tileheight,
+              screenX,
+              screenY,
+              map.tileSize,
+              map.tileSize
+            );
+          }
         }
       }
     }
@@ -69,20 +152,23 @@ export function drawMap(ctx, map, camera) {
 /**
  * Checks if a target coordinate collides with walls or furniture objects.
  */
-export function checkCollision(x, y, map, avatarSize = 32) {
+export function checkCollision(x, y, map, avatarSize = 24) {
   if (!map || !map.layers) return false;
 
-  const collisionLayer = map.layers.find(l => l.name === 'collision' || l.name === 'walls');
+  const collisionLayer = map.layers.find((l) => {
+    const name = (l.name || '').toLowerCase();
+    return name === 'collision' || name === 'walls';
+  });
   if (!collisionLayer) return false;
 
   const tileSize = map.tileSize;
 
-  // Check corners of the avatar bounding box
+  // Check the 4 corners of the avatar's bounding box
   const points = [
-    { x: x, y: y },                           // Top-left
-    { x: x + avatarSize, y: y },               // Top-right
-    { x: x, y: y + avatarSize },               // Bottom-left
-    { x: x + avatarSize, y: y + avatarSize }   // Bottom-right
+    { x: x + 4, y: y + 8 },                             // Top-left
+    { x: x + avatarSize - 4, y: y + 8 },                // Top-right
+    { x: x + 4, y: y + avatarSize },                    // Bottom-left
+    { x: x + avatarSize - 4, y: y + avatarSize },       // Bottom-right
   ];
 
   for (const pt of points) {
@@ -90,39 +176,18 @@ export function checkCollision(x, y, map, avatarSize = 32) {
     const tileY = Math.floor(pt.y / tileSize);
 
     if (tileX < 0 || tileX >= map.width || tileY < 0 || tileY >= map.height) {
-      return true; // Out of bounds map edges
+      return true; // Out of bounds map boundaries
     }
 
     const index = tileX + tileY * map.width;
-    if (collisionLayer.data && collisionLayer.data[index] > 0) {
-      return true; // Collided with a solid block
+    const rawTileId = collisionLayer.data ? collisionLayer.data[index] : 0;
+    const cleanTileId = rawTileId & 0x1FFFFFFF;
+
+    // Solid obstacle if tile is present and not an accidental floor tile (926 / 192)
+    if (cleanTileId > 0 && cleanTileId !== 926 && cleanTileId !== 192) {
+      return true; // Collided with a solid tile
     }
   }
 
   return false;
 }
-
-/**
- * Fallback visual structure mirroring your office layout design 
- * (Product Team desks, CX team room, Lounge, Cafeteria, Meeting Room).
- */
-// function drawFallbackOffice(ctx, camera) {
-//   const ox = -camera.x;
-//   const oy = -camera.y;
-
-//   // Start with one simple rectangular office shell.
-//   const officeX = ox + 40;
-//   const officeY = oy + 40;
-//   const officeWidth = 920;
-//   const officeHeight = 780;
-
-//   // ctx.fillStyle = '#475569';
-//   // ctx.fillRect(officeX, officeY, officeWidth, officeHeight);
-
-//   // ctx.fillStyle = '#f8fafc';
-//   // ctx.fillRect(officeX + 12, officeY + 12, officeWidth - 24, officeHeight - 24);
-
-//   // ctx.strokeStyle = '#1e293b';
-//   // ctx.lineWidth = 8;
-//   // ctx.strokeRect(officeX, officeY, officeWidth, officeHeight);
-// }
