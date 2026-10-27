@@ -1,9 +1,9 @@
-# How the signaling server works (v1)
+# How the signaling server works (v2)
 
-Module 1 · Person 1 (Aryan) · Covers the code on branch `aryan` up to Task 6.
+Module 1 · Person 1 (Aryan) · Covers the code on branch `aryan` up to Task 10.
 
-Files described here: `server/signaling/index.js`, `server/signaling/players.js`, `server/signaling/tick.js`, `server/signaling/fakeNearby.js`, `client/src/net/index.js`.
-Event names and payloads come from `CONTRACTS.md` (v2), sections 4–6.
+Files described here: `server/index.js`, `server/signaling/index.js`, `server/signaling/players.js`, `server/signaling/tick.js`, `server/signaling/fakeNearby.js`, `client/src/net/index.js`, `client/src/rtc/mic.js`, `client/src/rtc/rtcManager.js`.
+Event names and payloads come from `CONTRACTS.md` (v3), sections 4–7.
 
 ---
 
@@ -23,7 +23,7 @@ The rest of this document explains each step.
 
 ## 1. What the signaling server does
 
-The **signaling server** is our Node.js program that every browser stays connected to; it works like a post office. It keeps a list of everyone in the office and their positions in memory, and handles people joining, moving and leaving. Ten times a second it sends everyone's positions to every browser, and four times a second it checks who is near whom and tells each browser who came close or walked away. It never carries anyone's voice; later (Task 8) it will only pass the short setup notes that let two browsers connect to each other directly.
+The **signaling server** is our Node.js program that every browser stays connected to; it works like a post office. It keeps a list of everyone in the office and their positions in memory, and handles people joining, moving and leaving. Ten times a second it sends everyone's positions to every browser, and four times a second it checks who is near whom and tells each browser who came close or walked away. It never carries anyone's voice; it only passes the short setup notes that let two browsers connect to each other directly (section 7).
 
 ---
 
@@ -124,7 +124,7 @@ This file is the browser's one connection to the server. It exports one object, 
 | `net.onPlayerJoined(cb)` | Calls `cb` on every `player:joined` |
 | `net.onPlayerLeft(cb)` | Calls `cb` on every `player:left` |
 | `net.onPeersUpdate(cb)` | Calls `cb` on every `peers:update` |
-| `net.onSignal(cb)` | Calls `cb` on every `rtc:signal` (nothing sends these yet) |
+| `net.onSignal(cb)` | Calls `cb` on every `rtc:signal` |
 | `net.sendSignal({ to, data })` | Sends `rtc:signal`. Does nothing before joining |
 
 Each `on…` function returns an **unsubscribe function**: call it to stop listening. Example: `const stop = net.onPlayerLeft(cb);` … later `stop();`.
@@ -166,7 +166,14 @@ New players start with `moved = true`. Without that, Riya and Sam could join at 
 5. **Update both peer sets.** For each "entered", add each player to the other's set. For each "left", remove each from the other's set. If the pair is already connected (or already apart), nothing is recorded, so nobody gets the same change twice.
 6. **Send** each affected browser one `peers:update` with everything that changed for it.
 
-Right now `findNearby` and `computePeerChanges` come from `fakeNearby.js`, a fake that measures straight-line distance (`Math.hypot`) from the in-memory Map. It answers in the same format as Person 2's engine, so Task 9 only changes which functions `tick.js` calls.
+**Where "who is near" comes from.** At start-up, `server/index.js` tries to start Person 2's geo engine (MongoDB) and passes the result to the tick:
+
+- If `MONGODB_URI` is set in `.env`, it waits for `connectDb` for at most 3 seconds (`Promise.race` against a timer), then calls `createGeoEngine({ roomId: 'office-1' })`. The tick then saves the moved players' positions with one `geo.upsertPositions([{ id, x, y }])` call before asking `geo.findNearby`. When someone disconnects, `geo.removeUser(id)` deletes their saved position.
+- If `MONGODB_URI` is missing, or connecting fails or takes longer than 3 seconds, the server logs `[server] geo engine not available, using fakeNearby: <reason>` and uses `geo = null`. The tick then uses `fakeNearby.js`, which measures straight-line distance (`Math.hypot`) from the in-memory Map and answers in the same format.
+
+The server always logs which one is in use. `computePeerChanges` always comes from `fakeNearby.js`, for both paths: it is a pure function, so it only needs the distances, wherever they came from (Person 2's identical, tested copy is `server/geo/peerChanges.js` on `dev`). On this branch `server/geo/` is still the stub, so without a `.env` the server uses `fakeNearby`.
+
+If `upsertPositions` fails (for example MongoDB went down), that tick is skipped and logged, and the moved flags are switched back on, so those players are checked again next tick. A failed `removeUser` is only logged.
 
 A flag stops a second tick starting while the first is still running, and an error in one tick is logged without crashing the server.
 
@@ -237,15 +244,64 @@ Because peers are symmetric, both people get a message even if only one of them 
 
 ---
 
-## 7. Not built yet
+## 7. The WebRTC handshake (Tasks 7–10)
 
-- **Passing WebRTC notes (`rtc:signal`), Task 8.** The browser side (`net.sendSignal`, `net.onSignal`) exists, but the server has no handler for `rtc:signal` yet, so these notes go nowhere.
-- **Person 2's geo engine, Task 9.** `attachSignaling` receives `geo: null`. The tick does not save positions to MongoDB yet (`upsertPositions` is skipped) and uses the fake `findNearby` and `computePeerChanges` from `fakeNearby.js`.
-- **The microphone and the voice connection itself** (Tasks 7–10).
+Words first:
+
+- **WebRTC** is the browser's built-in way to send audio straight to another browser. One **RTCPeerConnection** is one direct connection to one person; each browser makes one per nearby person.
+- The **offer** is the first note: "I want to send you audio; here are the audio formats I support". The **answer** is the reply: "okay, here are mine". Both carry their details as **SDP** text, which we never read, only pass along.
+- An **ICE candidate** is a note saying "here is a network address where you might reach me". Each browser finds a few and sends each one as soon as it is found.
+- **STUN** is a free helper server (we use Google's, `stun:stun.l.google.com:19302`) that tells a browser its public internet address, so it can offer that address as a candidate. A **TURN** relay is added only if `VITE_TURN_URL` is set, and it isn't yet.
+
+### Example: Riya ('a1') and Sam ('b7')
+
+1. **Microphone.** On the `?lab=rtc` page each person clicks "Join with mic". `getMicStream()` (`mic.js`) asks for the microphone with echo cancellation and noise suppression. If the page is not https or localhost, permission is denied, or there is no microphone, the page shows a clear error and does not join. Then `net.connect` joins, and the rtc manager is created straight away, so it can't miss the first `peers:update`.
+2. **They come close.** The tick sends both browsers `peers:update` with the other person in `entered`. Each browser creates a connection and adds its microphone track to it.
+3. **Who sends the offer.** `'a1' < 'b7'` (plain string comparison), so only Riya creates the offer, stores it as her own description (`setLocalDescription`), and sends `{ type: 'offer', sdp }`. Sam waits. If both sent an offer at once ("glare"), the setup would break.
+4. **The answer.** Sam receives the offer, stores it as the other side's description (`setRemoteDescription`), creates the answer, stores it, and sends `{ type: 'answer', sdp }`. If the offer reaches Sam before his own `peers:update`, he creates the connection right then. Riya uses the answer only if she is waiting for one (her connection is in the `have-local-offer` state).
+5. **ICE candidates.** Both browsers send each candidate they find as `{ type: 'candidate', candidate }`. The browsers try the addresses until one works, and the connection state goes `new` → `connecting` → `connected`.
+6. **Voices.** When the other person's audio arrives (`ontrack`), the manager calls `onRemoteStream(id, stream)` once, and the lab page plays it in an `<audio>` element.
+7. **They walk apart.** At more than 140 px, `peers:update` lists the other person in `left`. Both browsers close the connection and call `onPeerClosed(id)`, and the page removes that `<audio>`. If a connection reaches `failed` (no address worked), it is closed the same way. There is no automatic retry yet.
+
+### The early-candidate queue
+
+A candidate can only be added after the other side's description is set, but candidates can arrive while `setRemoteDescription` is still working. Example: Sam's first candidate reaches Riya while she is still storing his answer. So a candidate that arrives too early waits in that connection's `pendingCandidates` list, and the whole list is added as soon as the description is set. A candidate from someone we have no connection with (they walked away a moment ago) is ignored with a warning.
+
+### What the server does with the notes
+
+The server only passes notes on (`handleSignal` in `server/signaling/index.js`) and never reads the SDP:
+
+1. The sender must have joined, otherwise `NOT_JOINED`.
+2. The payload must be `{ to, data }`, with `to` a string and `data.type` one of `offer`, `answer`, `candidate`. An offer or answer needs a string `sdp`; a candidate needs a `candidate` object. Otherwise `BAD_SIGNAL`.
+3. `to` must be online and in the sender's peer set (`arePeers` in `tick.js`), that is, within earshot. Otherwise `BAD_SIGNAL`, with a message saying which check failed.
+4. It delivers `{ from, data }` to that one browser. `from` is always the sender's socket id; a `from` sent by the browser is never read. Only `type` and `sdp` (or `type` and `candidate`) are copied into `data`.
+
+```
+  Riya's browser ('a1')               Server                    Sam's browser ('b7')
+        |<-- peers:update entered b7 --|-- peers:update entered a1 -->|
+        |   (a1 < b7, so Riya offers)  |                              |
+        |-- rtc:signal {to b7, offer} >|-- rtc:signal {from a1, ...} >|
+        |< rtc:signal {from b7, ...} --|<- rtc:signal {to a1, answer}-|
+        |<======== candidates, both ways, by the same path ==========>|
+        |                              |                              |
+        |<============ voice, directly browser to browser ===========>|
+        |                  (never through the server)                 |
+```
+
+### Mute
+
+`setMuted(true)` switches off (`enabled = false`) the microphone track that every connection shares. The connections stay open and send silence, so unmuting is instant.
 
 ---
 
-## 8. Viva answers
+## 8. Not built yet
+
+- **The awkward cases, Task 11:** no automatic retry when a connection fails, no special handling of a page refresh, and no TURN settings yet.
+- **Person 4's mixer, Week 3:** the lab plays each voice in a plain `<audio>` element at full volume. Volume by distance and left/right panning come from the mixer later.
+
+---
+
+## 9. Viva answers
 
 Built from section 10 of `docs/briefs/module-1-signaling-webrtc.md`, limited to what the code does today.
 
@@ -262,4 +318,19 @@ Nearness changes slowly, and later each check will cost a MongoDB query, so fewe
 8 × 7 ÷ 2 = 28, because each pair is one connection and a pair is counted once. In our tick, if 8 people stand within 100 px, each peer set ends up holding the other 7, and the symmetric update makes sure each pair is recorded once, not twice.
 
 **Why doesn't the voice go through our server?**
-Today the server carries only names, positions and peer lists, never sound. The plan is for WebRTC to send the voice browser to browser, with the server only passing the setup notes (not built yet, Task 8), which means less delay and less load on the server.
+WebRTC sends the voice browser to browser. The server only passes the setup notes (offer, answer, ICE candidates), so there is less delay and less load on the server.
+
+**What are the offer, answer and ICE candidates?**
+The offer and answer agree on the audio formats; ICE candidates share possible network addresses. They travel through our server as `rtc:signal` notes.
+
+**How do you stop both browsers sending an offer?**
+Only the person with the smaller id (plain string comparison) sends it. The other only answers.
+
+**Why queue ICE candidates?**
+A candidate can't be added before the other side's description is set, and candidates can arrive before that. Queued candidates are added as soon as it is set; without the queue, connections would fail at random.
+
+**Why does the server refuse notes to people who are not near?**
+A voice connection should only exist within earshot. Checking the peer set also stops one browser from sending notes to anyone in the office.
+
+**Why does the microphone need HTTPS?**
+Browsers only allow `getUserMedia` on secure pages (https) or on localhost. `getMicStream` checks `window.isSecureContext` and says so clearly.

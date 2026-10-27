@@ -90,3 +90,11 @@ Module 1: Signaling + WebRTC · Branch `aryan` · Team lead
 - Wrote docs/signaling.md: join, move, broadcast, leave, the browser net connection and (if built) the proximity tick, all in my own words from the code.
 - Checked the doc against the code. Where the code and CONTRACTS.md differ, I noted it.
 - Learned: explaining the 100 ms broadcast and the 100/140 px gap out loud is the best viva practice.
+
+## 27 Oct 2026 — Tasks 7–10: microphone, signaling relay, handshake, two-way audio
+- getMicStream asks for the mic (echo cancellation on) and gives clear errors: not https/localhost, permission denied, no mic.
+- The server passes rtc:signal notes only between peers in earshot, writes `from` itself, and answers BAD_SIGNAL for bad notes. signal-test checks it.
+- The smaller id sends the offer, the other answers, and both swap ICE candidates. Early candidates wait in a queue until the remote description is set.
+- At start-up the server tries Person 2's geo engine (3 s limit) and falls back to fakeNearby.
+- Learned: the voice never touches our server; it only carries the setup notes.
+Tested by hand: two tabs hear each other; 150 px apart disconnects, back to 100 px reconnects

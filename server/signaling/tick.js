@@ -15,9 +15,14 @@
 import { EVENTS } from '../../shared/events.js';
 import { AUDIO_MODES, DISCONNECT_PX, EARSHOT_PX, PROXIMITY_TICK_MS } from '../../shared/constants.js';
 import { getPlayer, listPlayers } from './players.js';
-// Fake "who is near" for now. Task 9: findNearby comes from Person 2's geo engine,
-// and computePeerChanges from server/geo/index.js.
-import { findNearby, computePeerChanges } from './fakeNearby.js';
+// "Who is near" has two possible sources (Task 9):
+//   - Person 2's geo engine (MongoDB), when server/index.js could start it (geo is an object);
+//   - our fake, fakeNearby.js (in-memory Math.hypot), when it couldn't (geo is null).
+// computePeerChanges always comes from fakeNearby.js, for both sources. It is a pure function
+// (no database), so it doesn't matter where the distances came from. Person 2's identical,
+// tested version lives in server/geo/peerChanges.js on `dev`; we keep our own copy here so
+// this branch works on its own.
+import { findNearby as fakeFindNearby, computePeerChanges } from './fakeNearby.js';
 
 // id → Set of peer ids. Only this file changes it.
 const peerSets = new Map();
@@ -36,11 +41,29 @@ function getPeerSet(playerId) {
 }
 
 /**
+ * Are these two players peers right now (is b in a's peer set)?
+ * The SIGNAL handler (index.js) uses this to pass WebRTC notes only between people in earshot.
+ * Peer sets are symmetric, so arePeers(a, b) and arePeers(b, a) always give the same answer.
+ *
+ * Example: Riya's set is { 'sam' } → arePeers('riya', 'sam') is true, arePeers('riya', 'lee') is false.
+ *
+ * @param {string} a - one player's id
+ * @param {string} b - the other player's id
+ * @returns {boolean}
+ */
+export function arePeers(a, b) {
+  const peerSet = peerSets.get(a);
+  // `?.` : if a has no peer set yet, the answer is undefined, and `=== true` turns that into false.
+  return peerSet?.has(b) === true;
+}
+
+/**
  * Start the proximity tick. Call this ONCE, from attachSignaling.
  * @param {import('socket.io').Server} io - the Socket.io server
+ * @param {object | null} geo - Person 2's engine, or null to use the fake (fakeNearby.js)
  * @returns {void}
  */
-export function startProximityTick(io) {
+export function startProximityTick(io, geo) {
   // findNearby is async. With MongoDB (Task 9) one tick might take longer than 250 ms.
   // This flag stops a second tick starting while the first is still waiting,
   // so two ticks never change the same peer sets at the same time.
@@ -53,10 +76,11 @@ export function startProximityTick(io) {
     tickIsRunning = true;
 
     try {
-      await runProximityTick(io);
+      await runProximityTick(io, geo);
     } catch (error) {
-      // Never let one bad tick crash the server. Log it; the next tick tries again.
-      console.error('[tick] the proximity tick failed, will try again next tick:', error);
+      // Never let one bad tick crash the server. Log it, skip the rest of this tick;
+      // the next tick tries again. A geo (MongoDB) error inside the tick also lands here.
+      console.error('[tick] the proximity tick failed, skipped; will try again next tick:', error);
     } finally {
       // `finally` runs whether the tick worked or threw.
       tickIsRunning = false;
@@ -75,7 +99,7 @@ export function startProximityTick(io) {
  *   computePeerChanges(Sam's empty set, ...) → { entered: [Riya], left: [] }  (90 <= 100)
  *   → Sam's set gets Riya, Riya's set gets Sam, and BOTH browsers get peers:update.
  */
-async function runProximityTick(io) {
+async function runProximityTick(io, geo) {
   // 1. Collect the players who are new or moved since the last tick. Nobody moved → nothing to do.
   const movedPlayers = listPlayers().filter((player) => player.moved === true);
   if (movedPlayers.length === 0) {
@@ -90,8 +114,24 @@ async function runProximityTick(io) {
     player.moved = false;
   }
 
-  // 2. TODO (Task 9): await geo.upsertPositions(movedPlayers.map(({ id, x, y }) => ({ id, x, y })));
-  //    Skipped for now: geo is null until Person 2's engine is plugged in.
+  // 2. Save the moved players' positions in MongoDB, in ONE call (Person 2 does one bulkWrite).
+  //    Only with the real engine: the fake reads the in-memory Map directly, so it needs no saving.
+  //    We send only { id, x, y } (not name, dir or the `moved` flag).
+  if (geo) {
+    const positions = movedPlayers.map((player) => ({ id: player.id, x: player.x, y: player.y }));
+    try {
+      await geo.upsertPositions(positions);
+    } catch (error) {
+      // MongoDB failed (e.g. it went down). We can't trust "who is near" without fresh positions,
+      // so we skip this tick. We set the flags back on first, so these players are checked again
+      // next tick instead of being forgotten until they move. `throw` sends the error to the
+      // try/catch in startProximityTick, which logs it.
+      for (const player of movedPlayers) {
+        player.moved = true;
+      }
+      throw error;
+    }
+  }
 
   // 3. Ask "who is near?" for every moved player IN PARALLEL. Promise.all starts all the
   //    questions at once and waits until every answer is back. With MongoDB this is much
@@ -99,7 +139,7 @@ async function runProximityTick(io) {
   //    One failed question must not lose everyone's answer, so a failure becomes null.
   const nearbyLists = await Promise.all(
     movedPlayers.map((player) =>
-      findNearby(player.id, DISCONNECT_PX).catch((error) => {
+      askWhoIsNear(geo, player.id).catch((error) => {
         console.error(`[tick] findNearby failed for ${player.id}:`, error);
         return null;
       }),
@@ -150,6 +190,24 @@ async function runProximityTick(io) {
 
   // 6. Send each affected browser ONE peers:update with everything that changed for it.
   sendPeerUpdates(io, changesByPlayer);
+}
+
+/**
+ * "Who is within DISCONNECT_PX of this player?" from whichever source we have.
+ * Both answer in the same format: [{ id, distance }], closest first, never the player themselves.
+ *
+ * It is `async` on purpose: if the engine throws straight away instead of returning a failed
+ * Promise, `async` still turns that into a failed Promise, so the `.catch` in the tick handles both.
+ *
+ * @param {object | null} geo - Person 2's engine, or null for the fake
+ * @param {string} playerId
+ * @returns {Promise<Array<{ id: string, distance: number }>>}
+ */
+async function askWhoIsNear(geo, playerId) {
+  if (geo) {
+    return geo.findNearby(playerId, DISCONNECT_PX);
+  }
+  return fakeFindNearby(playerId, DISCONNECT_PX);
 }
 
 /**

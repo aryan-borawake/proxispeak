@@ -1,10 +1,11 @@
 // server/signaling/fakeNearby.js — Person 1 (Module 1: Signaling + WebRTC)
 // A FAKE "who is near" check, so the proximity tick works before Person 2's geo engine exists.
 //
-// Why a fake? The real answer will come from MongoDB (Person 2's server/geo/). Until it is
-// plugged in (Task 9), we measure distances ourselves from the in-memory players Map.
-// Both functions answer in exactly the same format as CONTRACTS.md section 6, so swapping
-// to the real engine later only changes which functions tick.js calls.
+// Why a fake? The real answer comes from MongoDB (Person 2's server/geo/). When that engine
+// can't start (no MONGODB_URI, MongoDB down, or too slow), server/index.js passes geo = null,
+// and the tick measures distances itself with this file, from the in-memory players Map.
+// Both functions answer in exactly the same format as CONTRACTS.md section 6, so tick.js
+// treats the two sources the same way.
 
 import { getPlayer, listPlayers } from './players.js';
 
@@ -57,8 +58,9 @@ export async function findNearby(userId, maxDistancePx) {
 }
 
 /**
- * temporary: replaced by Person 2's engine in Task 9.
- * (server/geo/index.js still has a stub that always answers "no changes".)
+ * The tick uses this copy for BOTH paths (real geo engine and fake), because it is pure:
+ * it only needs distances, wherever they came from. Person 2's identical, tested version
+ * lives in server/geo/peerChanges.js on `dev`; on this branch server/geo/ is still the stub.
  *
  * The "came close / walked away" rule. A pure function: it only looks at its inputs
  * (no database, no network, no players Map), so the same inputs always give the same answer.

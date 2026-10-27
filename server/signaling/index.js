@@ -4,8 +4,8 @@
 // Exact names and payloads: CONTRACTS.md. Plan: docs/briefs/module-1-signaling-webrtc.md.
 //
 // Built so far: join and disconnect (Task 2); MOVE, the PLAYERS_STATE broadcast and
-// PLAYER_LEFT (Task 3); the proximity tick with a fake "who is near" check (Task 6, tick.js).
-// Still to come: SIGNAL note passing (Task 8), Person 2's geo engine (Task 9).
+// PLAYER_LEFT (Task 3); the proximity tick (Task 6, tick.js); SIGNAL note passing between
+// peers in earshot (Task 8); Person 2's geo engine, with fakeNearby.js as the fallback (Task 9).
 
 import { EVENTS } from '../../shared/events.js';
 import {
@@ -17,10 +17,14 @@ import {
   WORLD_MAX_PX,
 } from '../../shared/constants.js';
 import { addPlayer, removePlayer, getPlayer, listPlayers, updatePlayerPosition } from './players.js';
-import { startProximityTick, removeFromPeers } from './tick.js';
+import { startProximityTick, removeFromPeers, arePeers } from './tick.js';
 
 // New players face down (towards the screen) when they appear. One of DIRECTIONS.
 const SPAWN_DIR = 'down';
+
+// The three kinds of WebRTC note a browser may put inside EVENTS.SIGNAL (CONTRACTS.md, section 4).
+// These are WebRTC's own names for the notes, not event names.
+const SIGNAL_TYPES = Object.freeze(['offer', 'answer', 'candidate']);
 
 /**
  * Plug all Socket.io event handlers into the server.
@@ -30,12 +34,10 @@ const SPAWN_DIR = 'down';
  *
  * @param {import('socket.io').Server} io - the Socket.io server
  * @param {{ geo: object | null }} options - geo is Person 2's engine from createGeoEngine(),
- *   or null until Task 9 (until then a fake "who is near" check is used)
+ *   or null when it isn't available (then the tick uses the fake, fakeNearby.js)
  * @returns {void}
  */
 export function attachSignaling(io, { geo }) {
-  // `geo` is not used yet. It is plugged in at Task 9 (until then tick.js uses fakeNearby.js).
-
   // This runs once for every browser that connects.
   io.on('connection', (socket) => {
     console.log(`[signaling] socket connected: ${socket.id}`);
@@ -48,8 +50,12 @@ export function attachSignaling(io, { geo }) {
       handleMove(socket, payload);
     });
 
+    socket.on(EVENTS.SIGNAL, (payload) => {
+      handleSignal(io, socket, payload);
+    });
+
     socket.on('disconnect', () => {
-      handleDisconnect(io, socket);
+      handleDisconnect(io, socket, geo);
     });
   });
 
@@ -57,9 +63,10 @@ export function attachSignaling(io, { geo }) {
   startStateBroadcast(io);
 
   // The "who is near whom?" check, every PROXIMITY_TICK_MS (250 ms). Also one timer, started once.
-  startProximityTick(io);
+  // geo goes to the tick: it uses Person 2's engine if we have one, otherwise the fake.
+  startProximityTick(io, geo);
 
-  console.log('[signaling] ready: listening for joins and moves');
+  console.log('[signaling] ready: listening for joins, moves and signals');
 }
 
 /**
@@ -176,6 +183,112 @@ function isCoordinate(value) {
 }
 
 /**
+ * A browser sent EVENTS.SIGNAL with { to, data }: a WebRTC setup note for one other browser.
+ * We check it, then pass it on as { from, data } to that one browser only.
+ * We never read the note itself (the SDP text); we only check its shape and who it's for.
+ *
+ * Example: Riya ('a1') sends { to: 'b7', data: { type: 'offer', sdp: 'v=0...' } }
+ *          → Sam ('b7') gets { from: 'a1', data: { type: 'offer', sdp: 'v=0...' } }
+ *
+ * Why only between peers? Two browsers should set up a voice connection only when they are
+ * in earshot (the tick put them in each other's peer set). This also stops one browser
+ * sending notes to anyone in the office (CONTRACTS.md, section 5, rule 5).
+ */
+function handleSignal(io, socket, payload) {
+  // 1. Only players who joined can send notes.
+  if (!getPlayer(socket.id)) {
+    sendError(socket, ERROR_CODES.NOT_JOINED, 'Join first: send EVENTS.JOIN with { name } before sending signals.');
+    return;
+  }
+
+  // 2. Check the shape. describeSignalProblem gives back null if it's fine, or the reason it isn't.
+  const problem = describeSignalProblem(payload);
+  if (problem !== null) {
+    sendError(
+      socket,
+      ERROR_CODES.BAD_SIGNAL,
+      `Signal ignored: ${problem}. Send { to, data } where data is { type: 'offer' | 'answer', sdp } ` +
+        `or { type: 'candidate', candidate }.`,
+    );
+    return;
+  }
+
+  const { to, data } = payload;
+
+  // 3. The receiver must be in the office right now.
+  if (!getPlayer(to)) {
+    sendError(socket, ERROR_CODES.BAD_SIGNAL, `Signal not delivered: no player with id "${to}" is online.`);
+    return;
+  }
+
+  // 4. ...and must be in the sender's peer set (within earshot). This also refuses
+  //    "send to myself", because nobody is in their own peer set.
+  if (!arePeers(socket.id, to)) {
+    sendError(
+      socket,
+      ERROR_CODES.BAD_SIGNAL,
+      `Signal not delivered: player "${to}" is not within earshot of you. ` +
+        `Only send signals to people you got in ${EVENTS.PEERS_UPDATE} "entered".`,
+    );
+    return;
+  }
+
+  // 5. Deliver it to that one browser. `io.to(id)` reaches exactly that socket (Socket.io puts
+  //    every socket in a private room named after its own id). We write `from` ourselves from
+  //    the sender's socket id. If the browser sent its own `from`, we simply never read it.
+  io.to(to).emit(EVENTS.SIGNAL, { from: socket.id, data: copySignalData(data) });
+}
+
+/**
+ * What is wrong with this SIGNAL payload? Returns null if nothing is wrong.
+ * Example: { to: 'b7', data: { type: 'offer', sdp: 'v=0...' } } → null (fine)
+ *          { data: { type: 'offer', sdp: 'v=0...' } }            → "`to` must be a player id (text)"
+ *          { to: 'b7', data: { type: 'nonsense' } }              → "`data.type` must be one of offer, answer, candidate"
+ *          null                                                   → "the payload must be an object"
+ */
+function describeSignalProblem(payload) {
+  // typeof null is 'object' in JavaScript, so we check for null separately.
+  if (typeof payload !== 'object' || payload === null) {
+    return 'the payload must be an object';
+  }
+  if (typeof payload.to !== 'string' || payload.to === '') {
+    return '`to` must be a player id (text)';
+  }
+
+  const data = payload.data;
+  if (typeof data !== 'object' || data === null) {
+    return '`data` must be an object';
+  }
+  if (!SIGNAL_TYPES.includes(data.type)) {
+    return `\`data.type\` must be one of ${SIGNAL_TYPES.join(', ')}`;
+  }
+
+  // An offer or an answer carries its SDP (the text listing audio formats) as a string.
+  if ((data.type === 'offer' || data.type === 'answer') && typeof data.sdp !== 'string') {
+    return `an ${data.type} needs \`sdp\` (text)`;
+  }
+
+  // A candidate carries the browser's candidate object (from RTCIceCandidate.toJSON()).
+  if (data.type === 'candidate' && (typeof data.candidate !== 'object' || data.candidate === null)) {
+    return 'a candidate needs a `candidate` object';
+  }
+
+  return null;
+}
+
+/**
+ * Copy only the fields the contract allows, so extra fields a browser adds are never passed on
+ * (the same idea as copying only x, y and dir from a move).
+ * Example: { type: 'offer', sdp: 'v=0...', junk: 1 } → { type: 'offer', sdp: 'v=0...' }
+ */
+function copySignalData(data) {
+  if (data.type === 'candidate') {
+    return { type: data.type, candidate: data.candidate };
+  }
+  return { type: data.type, sdp: data.sdp };
+}
+
+/**
  * Every STATE_BROADCAST_MS (100 ms), send everyone's position to everyone in the room.
  * Payload: { t, players: [{ id, x, y, dir }] }, where t is the server's clock in ms.
  * Example: { t: 1760781234567, players: [{ id: 'a1', x: 250, y: 300, dir: 'right' }] }
@@ -211,7 +324,7 @@ function startStateBroadcast(io) {
  * Socket.io removes it from its rooms by itself; we remove it from our store
  * and tell everyone still in the room, so they can delete that character.
  */
-function handleDisconnect(io, socket) {
+function handleDisconnect(io, socket, geo) {
   const player = getPlayer(socket.id);
   const wasRemoved = removePlayer(socket.id);
 
@@ -225,9 +338,29 @@ function handleDisconnect(io, socket) {
   // so their browsers close the voice connection.
   removeFromPeers(io, socket.id);
 
+  // With the real engine, also delete their saved position from MongoDB, so findNearby stops
+  // returning them. We don't wait for it (nothing below needs it), and a failure must never
+  // crash the server, so removeUserFromGeo catches and logs it.
+  if (geo) {
+    removeUserFromGeo(geo, socket.id);
+  }
+
   // The leaving socket has already left the room, so "everyone in the room" means everyone else.
   io.to(DEFAULT_ROOM).emit(EVENTS.PLAYER_LEFT, { id: socket.id });
   console.log(`[signaling] player left: ${player.name} (${socket.id}), ${listPlayers().length} left`);
+}
+
+/**
+ * Ask the geo engine to forget a user who left. Any error is only logged.
+ * `async` turns an error thrown straight away into a failed Promise too, so this one
+ * try/catch handles both kinds.
+ */
+async function removeUserFromGeo(geo, playerId) {
+  try {
+    await geo.removeUser(playerId);
+  } catch (error) {
+    console.error(`[signaling] geo.removeUser failed for ${playerId} (the server keeps running):`, error);
+  }
 }
 
 /**

@@ -55,6 +55,7 @@ export const ERROR_CODES = Object.freeze({
   ALREADY_JOINED: 'ALREADY_JOINED', // this browser tab already joined
   NOT_JOINED: 'NOT_JOINED', // the browser sent something (e.g. a move) before joining
   BAD_MOVE: 'BAD_MOVE', // a move had a bad x, y or dir, so it was ignored
+  BAD_SIGNAL: 'BAD_SIGNAL', // a WebRTC note had a bad shape, or its receiver is not online or not in earshot
 });
 
 // How a voice's volume is set.
