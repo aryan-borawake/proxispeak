@@ -159,3 +159,33 @@
 **Tomorrow**
 - Paint the solid `collision` layer in Tiled, export the finished map to `client/public/maps/office.json`, and verify collision checking in `map.js`.
 
+---
+
+## Mon 26 Oct 2026 — Tasks 4 & 5: Map export, Tiled rotation fix, and fake network bots
+
+**What I built**
+- Exported the complete 35×25 office map from Tiled into `client/public/maps/office.json`.
+- Implemented real-time map rendering in `client/src/world/map.js`, preloading all tileset images (`Room_Builder`, `Interiors`, `Interior`) and rendering active layers on the HTML5 canvas.
+- Integrated the official Tiled affine transformation matrix in `map.js` to correctly render rotated (`Z`) and flipped (`X`, `Y`) tiles for carpets, sofas, and furniture.
+- Diagnosed and fixed a collision bug where floor tiles (#926) on the `Walls` layer trapped the avatar in the Lobby doorway, updating `checkCollision` to ignore floor tile IDs.
+- Built `client/src/world/fakeNet.js` simulating the network interface with autonomous wandering bots (Alex, Sam, Riya, Taylor) to test multi-user movement locally.
+- Implemented linear interpolation in `WorldCanvas.jsx` so remote characters glide smoothly Partway between 100 ms network ticks, and added throttled position broadcasting (`MOVE_SEND_HZ = 10` times/sec) via `net.sendMove`.
+- Added bot count controls (1, 3, 5, 50 stress test) and an earshot debug circle toggle in `WorldLab.jsx`, and removed the canvas border frame for a clean look.
+
+**How it works (in my own words)**
+- Tiled encodes rotation and flip transformations into the highest 3 bits of a tile ID. In code, we extract those flags using bitwise operations and apply a 2D affine transformation matrix (`ctx.transform(a, b, c, d, 0, 0)`) so rotated items appear at the exact orientation painted in Tiled.
+- Remote player positions arrive only 10 times a second (`STATE_BROADCAST_MS = 100`). Without smoothing, avatars would teleport in jagged steps. Linear interpolation (lerping) slides their positions a fraction of the distance toward their target on every 60 FPS animation frame, producing a smooth gliding effect.
+- `fakeNet.js` mimics the real Socket.io connection by broadcasting `{ t, players }` payloads every 100 ms, allowing full frontend testing without running the backend server.
+
+**Problems and how I fixed them**
+- **Trapped in the Lobby:** Floor tile #926 was accidentally placed across the doorway on the `Walls` layer. Because collision checked for any tile $> 0$, the doorway acted like an invisible wall. Updated `checkCollision` to filter out floor tiles and allow passage.
+- **Inverted/Distorted Rotated Furniture:** Rotated sofas and lobby carpets appeared backwards due to an inverted rotation order in canvas transforms. Fixed by replacing ad-hoc rotation calls with the standard mathematical affine transformation matrix for Tiled flags.
+
+**What I learned**
+- How bitwise flag masking works in tilemap data (`rawTileId & 0x1FFFFFFF`).
+- Why linear interpolation (lerp) is essential for online multiplayer games to hide network latency and tick rate gaps.
+
+**Tomorrow**
+- Replace placeholder circle avatars with animated character sprite sheets (Task 9) and prepare the 50-bot speed check for integration.
+
+
