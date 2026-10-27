@@ -48,6 +48,16 @@ export const ZONE_TYPES = Object.freeze({
   LOBBY: 'lobby', // the entrance: works like open floor
 });
 
+// The `code` inside every EVENTS.SERVER_ERROR message is one of these.
+// A code lets the browser tell errors apart without reading the message text.
+export const ERROR_CODES = Object.freeze({
+  BAD_NAME: 'BAD_NAME', // join had a missing or empty name
+  ALREADY_JOINED: 'ALREADY_JOINED', // this browser tab already joined
+  NOT_JOINED: 'NOT_JOINED', // the browser sent something (e.g. a move) before joining
+  BAD_MOVE: 'BAD_MOVE', // a move had a bad x, y or dir, so it was ignored
+  BAD_SIGNAL: 'BAD_SIGNAL', // a WebRTC note had a bad shape, or its receiver is not online or not in earshot
+});
+
 // How a voice's volume is set.
 export const AUDIO_MODES = Object.freeze({
   FALLOFF: 'falloff', // quieter with distance, silent at EARSHOT_PX
