@@ -188,4 +188,34 @@
 **Tomorrow**
 - Replace placeholder circle avatars with animated character sprite sheets (Task 9) and prepare the 50-bot speed check for integration.
 
+---
+
+## Wed 28 Oct 2026 — Tasks 5, 6 & 7: Bot collisions, framerate independence & whole-map view
+
+**What I built**
+- Integrated collision detection into `client/src/world/fakeNet.js` so autonomous wandering bots check `checkCollision` before stepping and turn away from walls.
+- Fixed bot freezing on bot count reduction (50 to 1) by emitting `playerLeft` events for all active bots upon calling `destroy()`, and clearing stale peer state in `WorldCanvas.jsx`.
+- Resolved the React StrictMode double-mount lifecycle bug in `WorldLab.jsx` by creating the fake network instance inside `useEffect` instead of `useMemo`.
+- Converted avatar movement and remote peer interpolation to framerate-independent physics using delta time (`WALK_SPEED_PX_PER_SEC = 180`, `MAX_DELTA_SEC = 0.05`), ensuring identical movement speeds across 60 Hz and 144 Hz displays.
+- Implemented responsive whole-map rendering in `WorldCanvas.jsx` to display the entire 35×25 office map ($1120 \times 800$ px) without camera scrolling, and aligned the audio earshot circle to the avatar's head.
+
+**How it works (in my own words)**
+- In `fakeNet.js`, bots calculate their desired next step `(nextX, nextY)` and verify it against the loaded `map` with `checkCollision`. If the tile is a wall or boundary, the bot stays in place and immediately chooses a new random wandering angle (`pickNewDirection`). Extra bots (bots 6–50) that spawn with offsets into walls are safely repositioned to walkable desk coordinates.
+- When you reduce the bot count from 50 to 1, the old `fakeNet` instance fires `playerLeft` callbacks for all 50 bots before disconnecting, and `WorldCanvas` clears its `othersRef` Map. This immediately removes old bot avatars from the screen instead of leaving them frozen.
+- In development mode, React StrictMode mounts, unmounts, and remounts components to detect memory leaks. Creating `fakeNet` inside `useEffect` ensures that cleanup destroys only the unmounted instance, while the active mount manages its own live instance with running timers.
+- Instead of moving a fixed 3 pixels per frame, the game loop measures delta time ($\Delta t$) in seconds between animation frames. Walking speed is calculated as $\text{speed} \times \Delta t$ ($180 \text{ px/s} \times 0.0167\text{ s} \approx 3\text{ px}$ at 60 FPS, or $\approx 1.25\text{ px}$ at 144 FPS). If a tab is backgrounded, $\Delta t$ is clamped to 0.05 s to prevent characters from warping through walls.
+
+**Problems and how I fixed them**
+- **Bots phasing through walls:** `fakeNet.js` was previously updating positions blindly without loading the office map. Fixed by loading the map via `loadOfficeMap()` and running `checkCollision` inside `stepBot`.
+- **Bots freezing when reducing count:** Destroying `fakeNet` previously halted intervals without notifying listeners. Fixed by emitting `cb({ id: b.id })` for all bots before clearing listeners, and clearing `othersRef` in `WorldCanvas.jsx`.
+- **Bots not moving on fresh page load:** `useMemo` in `WorldLab.jsx` held onto a dead fakeNet instance after StrictMode's initial cleanup. Switched to `useEffect` with local state `fakeNet`.
+
+**What I learned**
+- What delta time clamping means and why game physics must be calculated per second rather than per frame to maintain cross-device consistency.
+- How React StrictMode's double-mount cycle affects stateful objects with cleanup methods (`destroy()`), and why `useEffect` is required over `useMemo` for network instances.
+- How exponential decay interpolation ($1 - (1 - \alpha)^{\Delta t \cdot 60}$) smooths remote multiplayer positions accurately regardless of screen refresh rate.
+
+**Tomorrow**
+- Replace circle avatars with animated character sprite sheets (Task 9) and prepare the 50-bot stress test for integration.
+
 
