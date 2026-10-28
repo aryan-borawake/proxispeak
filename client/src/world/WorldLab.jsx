@@ -1,22 +1,33 @@
 // client/src/world/WorldLab.jsx — Person 3
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState } from 'react';
 import { WorldCanvas } from './WorldCanvas.jsx';
 import { createFakeNet } from './fakeNet.js';
 
 export function WorldLab() {
-  const [botCount, setBotCount] = useState(3);
+  // 5 bots on first load (after a refresh it goes back to 5; we don't store it).
+  const [botCount, setBotCount] = useState(5);
   const [showDebug, setShowDebug] = useState(false);
 
-  // Initialize fake network with wandering bots
-  const fakeNet = useMemo(() => {
-    return createFakeNet({ bots: botCount });
-  }, [botCount]);
+  // The fake network (with its wandering bots). null until the effect below creates it.
+  const [fakeNet, setFakeNet] = useState(null);
 
+  // Create the fake net INSIDE an effect, and destroy that same one in the effect's cleanup.
+  //
+  // Why not useMemo (the old code)? In development, React StrictMode (main.jsx) mounts the
+  // page, unmounts it and mounts it again, to find bugs. useMemo kept the SAME fake net
+  // through that, but the cleanup in between destroyed it (stopped the bots' timer), so the
+  // bots never appeared until a bot button made a new one.
+  //
+  // With an effect, each mount creates its own fake net and each cleanup destroys only its own:
+  //   mount → create net A → cleanup → destroy A → mount again → create net B (B is used).
+  // Changing the bot count does the same: destroy the old net, create a new one.
   useEffect(() => {
+    const createdNet = createFakeNet({ bots: botCount });
+    setFakeNet(createdNet);
     return () => {
-      fakeNet.destroy();
+      createdNet.destroy();
     };
-  }, [fakeNet]);
+  }, [botCount]);
 
   return (
     <section style={{ padding: '20px', fontFamily: 'sans-serif', color: '#f8fafc', background: '#090d16', minHeight: '100vh' }}>
