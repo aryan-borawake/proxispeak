@@ -53,12 +53,18 @@ export function WorldCanvas({ net, selfId = 'self', spawn, initialPlayers = [], 
   useEffect(() => {
     if (!net) return;
 
+    // Reset other players when the network restarts or reconnects
+    othersRef.current.clear();
+
     // Handle players state broadcast (10x a second)
     const unsubState = net.onPlayersState?.((state) => {
       if (!state || !Array.isArray(state.players)) return;
 
+      const activeIds = new Set();
+
       state.players.forEach((p) => {
         if (p.id === selfId) return; // Don't overwrite local player
+        activeIds.add(p.id);
 
         const existing = othersRef.current.get(p.id);
         if (existing) {
@@ -78,6 +84,13 @@ export function WorldCanvas({ net, selfId = 'self', spawn, initialPlayers = [], 
           });
         }
       });
+
+      // Remove any players who left or are no longer in the room broadcast
+      for (const id of othersRef.current.keys()) {
+        if (!activeIds.has(id)) {
+          othersRef.current.delete(id);
+        }
+      }
     });
 
     // Handle single player join
