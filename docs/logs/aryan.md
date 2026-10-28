@@ -98,3 +98,9 @@ Module 1: Signaling + WebRTC · Branch `aryan` · Team lead
 - At start-up the server tries Person 2's geo engine (3 s limit) and falls back to fakeNearby.
 - Learned: the voice never touches our server; it only carries the setup notes.
 Tested by hand: two tabs hear each other; 150 px apart disconnects, back to 100 px reconnects
+## 28 Oct 2026 — Integration day and mid-review prep
+- Merged all four branches into dev through pull requests #1–#6 (merge commits only). The client builds and all four robot tests pass on dev.
+- Built the office page (?lab=office): my net and rtc manager, Anjali's WorldCanvas and Koushik's mixer, wired as CONTRACTS.md section 8. Two windows: same spot = volume 100%, 63 px apart = 30%, past 140 px = disconnected.
+- Sent Anjali tested patches for her world (bots on first load, real FPS, delta-time speed, whole office view, bots avoid walls). Learned to regenerate a patch when the owner's files have changed.
+- Mid-review prep: a demo script, viva sheets for all four of us, and a slides deck (architecture, step-by-step flow, data model, results).
+- Learned: uncommitted changes follow you across git switch when the files are the same on both branches; a pull request updates itself when the branch gets new commits.
