@@ -218,4 +218,37 @@
 **Tomorrow**
 - Replace circle avatars with animated character sprite sheets (Task 9) and prepare the 50-bot stress test for integration.
 
+---
+
+## Thu 29 Oct 2026 — Tasks 7 & 8: Group testing & multi-module integration verification
+
+**What I built & tested**
+- Participated in our team integration and testing session with Aryan (Signaling/WebRTC), Pratik (Geospatial engine), and Koushik (Spatial audio).
+- Tested `WorldCanvas.jsx` with the team to ensure our 2D world satisfies all integration interfaces in `CONTRACTS.md`.
+- Verified the `onFrame` callback integration with Person 4's spatial audio mixer, passing real-time coordinate frames (`{ self: { id, x, y }, others: [{ id, x, y, blocked }] }`) on every animation frame.
+- Tested the 100 px `EARSHOT_PX` hearing boundary visually against Person 4's audio volume falloff curve, checking that voices fade to silence exactly as avatars step outside the blue circle.
+- Validated position broadcasting with Person 1's network contract (`net.sendMove`), confirming positions send at most 10 times a second (`MOVE_SEND_HZ = 10`) and only when moving.
+- Ran multi-user stress tests with 5, 10, and 50 bots in `WorldLab.jsx`, confirming consistent 60 FPS rendering and smooth exponential interpolation across different laptops.
+
+**How it works (in my own words)**
+- During our group test, we checked how the four pieces fit together into one experience:
+  1. As I walk using Arrow keys or WASD, `WorldCanvas` updates my character's position using delta-time physics and checks wall collisions against `office.json`.
+  2. If I moved, `WorldCanvas` calls `net.sendMove({ x, y, dir })` at 10 Hz to notify the server.
+  3. Every 60 FPS animation frame, `WorldCanvas` invokes the `onFrame` callback, handing `{ self, others }` world coordinates to Person 4's audio engine.
+  4. Person 4's mixer calculates the distance (`Math.hypot(dx, dy)`). When distance is within 100 px (`EARSHOT_PX`), volume scales up; when an avatar moves to my right (`dx > 0`), sound pans to my right ear (`dxToPan`).
+  5. As other players or bots move, their positions arrive every 100 ms (`PLAYERS_STATE`). Our exponential glide formula (`1 - (1 - 0.15)^(deltaSec * 60)`) slides them smoothly across the canvas without stutter.
+
+**Problems and how I fixed them**
+- **Contract coordinate mismatch:** We verified whether `onFrame` should send raw world coordinates or screen coordinates. Screen coordinates subtract camera offset (`renderX = x - camera.x`), which would break Person 4's distance formula if the camera scrolled. Confirmed that `onFrame` always outputs absolute world coordinates `(x, y)`.
+- **Audio ring visual sync:** Tested the blue `EARSHOT_PX` radius circle with Koushik. Confirmed that centering the circle at `(renderX + 16, renderY + 10)` (the avatar's head/ears) matches the exact distance where WebRTC audio becomes audible.
+- **Laptop refresh rate differences:** During group testing on different screens (a 60 Hz display and a 144 Hz display), our yesterday's delta-time fix proved successful—characters moved across the room at the exact same physical speed on both machines.
+
+**What I learned**
+- What "contract-first development" means in practice: by agreeing on event names and coordinate formats in `CONTRACTS.md` on Day 1, all 4 modules could be tested together without breaking each other's code.
+- How the 2D world visual layer acts as the single source of truth for spatial audio: WebRTC handles the voice streams, but the canvas coordinates dictate who hears whom and from which direction.
+- How multi-user stress testing reveals edge cases in framerate and memory management.
+
+**Tomorrow**
+- Begin integrating animated character sprite sheets (Task 9) to replace the temporary circle avatars with walking character animations.
+
 
