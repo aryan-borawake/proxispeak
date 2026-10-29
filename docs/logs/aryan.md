@@ -104,3 +104,11 @@ Tested by hand: two tabs hear each other; 150 px apart disconnects, back to 100 
 - Sent Anjali tested patches for her world (bots on first load, real FPS, delta-time speed, whole office view, bots avoid walls). Learned to regenerate a patch when the owner's files have changed.
 - Mid-review prep: a demo script, viva sheets for all four of us, and a slides deck (architecture, step-by-step flow, data model, results).
 - Learned: uncommitted changes follow you across git switch when the files are the same on both branches; a pull request updates itself when the branch gets new commits.
+
+## 29 Oct 2026 — Weeks 3–4 planning start
+- Mid review slot not announced yet; dev runs the office page with all four modules.
+- Planned Task 11 (reconnect and start-up checks): geo engine self-check with fakeNearby fallback,
+  Vite envDir set to the repo root so VITE_SERVER_URL / VITE_TURN_* load, net.onRejoin and automatic
+  re-join after a server restart, disconnect-reason logging, server/scripts/reconnect-test.js.
+- Next: design call with Anjali (login, lobby, office, admin screens), asset licence decision
+  (Kenney CC0 vs LimeZu), Weeks 3–4 task calendar for all four modules.
