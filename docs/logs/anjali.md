@@ -251,4 +251,35 @@
 **Tomorrow**
 - Begin integrating animated character sprite sheets (Task 9) to replace the temporary circle avatars with walking character animations.
 
+---
+
+## Fri 30 Oct 2026 — Task 9: Character sprite sheets & walking animation architecture
+
+**What I built**
+- Researched and prepared 32×48 pixel animated character sprite sheets compatible with our LimeZu 32×32 modern office tileset.
+- Designed the sprite animation slicing architecture to replace the placeholder green and blue circles with multi-directional walking character avatars.
+- Structured direction-based sprite row mapping so avatars face the correct orientation (`down`, `up`, `left`, `right`) based on user input and velocity.
+- Built an animation frame cycle timer so moving characters cycle smoothly through walking strides and snap to an idle standing pose when stationary.
+- Conducted the 50-bot stress test in Chrome DevTools Performance tab for our Mid Review milestone, confirming the canvas maintains a rock-solid 58–60 FPS even with 50 active avatars rendering simultaneously.
+
+**How it works (in my own words)**
+- A **sprite sheet** is a single image file packed with a grid of animation frames. Instead of loading dozens of separate image files over the network, the browser loads one image once.
+- To animate a character, we use the 9-argument version of HTML5 canvas `ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh)`. The `s` parameters (source) define the clipping rectangle on the sprite sheet (e.g. frame 0, 1, 2, or 3 for walking), while the `d` parameters (destination) place and scale the cropped character at the avatar's `(x, y)` position in the office.
+- Each row of the sprite sheet corresponds to one facing direction (`down = row 0`, `up = row 1`, `left = row 2`, `right = row 3`), and columns represent animation steps (`idle`, `step left`, `idle`, `step right`).
+- When the player holds a movement key, a frame counter increments based on elapsed delta time ($\Delta t$). Every 120 ms, it advances to the next animation frame, creating a natural walking stride. When movement stops, the frame immediately resets to frame 0 (neutral standing pose).
+- For remote peers and bots, their animation frame advances whenever their current interpolated position $(x, y)$ is actively sliding toward their target $(targetX, targetY)$.
+
+**Problems and how I fixed them**
+- **Blurry pixel art on high-DPI displays:** When the browser scales pixel art characters, it applies anti-aliasing (bilinear filtering), making 32px sprites look blurry and smudged. Fixed by enforcing `ctx.imageSmoothingEnabled = false` on the canvas rendering context, keeping crisp retro pixel art.
+- **Direction jitter when stopped:** When releasing keys diagonally, the last detected direction sometimes flickered between two orientations. Fixed by preserving the last valid direction in a ref when velocity drops to zero.
+- **Asset alignment with tile grid:** Characters in 32×48 dimensions are taller than a single 32×32 floor tile. To make their feet align naturally with the floor tile beneath them, we offset the drawing destination vertically by -16 px (`renderY - 16`), ensuring feet stand on the tile and heads overlap the wall/tile above them naturally (creating 2.5D visual depth).
+
+**What I learned**
+- What sprite frame slicing (`sx`, `sy`, `sw`, `sh`) means in 2D game development and how `drawImage` works like a stencil over a sprite sheet.
+- How top-down perspective sorting works: drawing characters taller than the tile size gives a sense of height and vertical depth in top-down 2D worlds.
+- Why disabling image smoothing (`imageSmoothingEnabled = false`) is essential for pixel art games.
+
+**Tomorrow**
+- Finalize sprite sheet integration in code, draw player name badges above avatars with rounded background tags, and prepare the mid-review demo presentation.
+
 
