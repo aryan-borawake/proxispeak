@@ -1,20 +1,46 @@
- ## Anjali: Daily Log
- ## 19/10/2026 - Task 1: Project research
+# Log — Anjali (Module 3: 2D World)
+
+**Owner:** Anjali | **Branch:** `anjali` | **Folders:** `client/src/world/`, `client/public/maps/`, `client/public/assets/`
+
+---
+
+## 📌 Work Done Till Now (Week 1 & Week 2 Milestone Summary)
+
+| Date | Task & Milestone | Key Deliverables & Technical Highlights | Status |
+|---|---|---|---|
+| **19 Oct** | Task 1: Research & Blueprint | Researched canvas architecture and designed office layout with 6 distinct zones (Lobby, Lounge, Booths, Open Desks, Meeting Room, Stage). | ✅ Complete |
+| **20 Oct** | Task 2: Canvas & Game Loop | Built `WorldCanvas.jsx` and `WorldLab.jsx`, initialized 60 FPS loop via `requestAnimationFrame`, and added non-rendering `useRef` FPS tracker. | ✅ Complete |
+| **21 Oct** | Task 3: Avatar Movement | Added WASD/Arrow listeners, diagonal velocity normalization ($\times 0.7071$), and `window.blur` key reset to prevent infinite walking. | ✅ Complete |
+| **22 Oct** | Tasks 3 & 4: Camera & Audio Ring | Camera viewport follow, scaffolded `map.js`, debug `EARSHOT_PX` circle (100 px), and absolute coordinate `onFrame` callback. | ✅ Complete |
+| **23 Oct** | Task 4: LimeZu Tileset Integration | Integrated 32×32 Modern Interiors tilesets, documented CC0/licenses in `CREDITS.md`, configured 35×25 Tiled orthogonal map. | ✅ Complete |
+| **24 Oct** | Task 4: Upper Office Wing Framing | Built Lobby, Meeting Room, and Stage with 3-tile doorways and multi-layered wall decoration sheets. | ✅ Complete |
+| **25 Oct** | Task 4: Lower Office Furnishing | Built Open Desks, Phone Booths, and Lounge; designed walkways ($\ge 64$ px) aligned with spatial audio constraints. | ✅ Complete |
+| **26 Oct** | Tasks 4 & 5: Map Export & FakeNet | Exported `office.json`, solved Tiled rotation/flipping via affine matrix transforms, built `fakeNet.js` with bot wander controls. | ✅ Complete |
+| **27 Oct** | Tasks 5 & 6: Collision & Bots | Diagnosed doorway collision trap (carpet tile #926), added wall sliding, and implemented smooth linear interpolation (lerp). | ✅ Complete |
+| **28 Oct** | Tasks 6 & 7: Physics & Lifetime Fix | Added bot wall collision, delta-time speed physics ($180\text{ px/s}$), StrictMode lifecycle fix in `useEffect`, and whole-map view. | ✅ Complete |
+| **29 Oct** | Tasks 7 & 8: Multi-Module Integration | Verified `onFrame` with Person 4's mixer, tested 10 Hz `net.sendMove` with Person 1, validated 100 px audio falloff radius. | ✅ Complete |
+| **30 Oct** | Task 9: Sprite Sheet Pipeline | Researched 32×48 character walk cycles, designed 9-argument `ctx.drawImage` slicing, tested 50 bots at steady 60 FPS in Chrome DevTools. | ✅ Complete |
+| **31 Oct** | Tasks 9 & 10: Badge Styling & Mid Freeze | Added rounded name badge pills, baseline alignment, 2.5D depth offset, and achieved Mid Review code freeze. | ✅ Complete |
+
+---
+
+## Mon 19 Oct 2026 — Task 1: Project research & office architecture design
 
 **What I built**
-- Today I researched about how can I make 2D canvas structure for the project, learning about various technologies I can use to build it. I also designed a base structure of the project explaning what are the structure is needed.
+- Researched 2D HTML5 canvas rendering architectures and state management techniques for top-down browser games.
+- Designed the architectural layout for our virtual office, structuring 6 functional zones to match our spatial audio requirements.
 
 **How it works (in my own words)**
-- There are 6 rooms created for the project where:
-1. The Lobby:  It is the "spawn point", its a place were every user logged in will be entered.
-2. The lounge: Its a sitting area where every user can rest and have normal chat with everyone
-3. The booth: It is a private sitting area where anyone can go and have private chats
-4. Open Desks:  It is the main employee place were every eployee is setteles into the office at       their place doing work and for communicating they need to be into a specific X-Y range.
-5. Metting room: The meeting room is structure for private audios only.
-6. Stage: Its a area where you can broadcast to everyone. 
+- The office is divided into 6 distinct zones:
+  1. **The Lobby:** The initial spawn point where every connected user enters the virtual office.
+  2. **The Lounge:** A relaxed seating area designed for casual, open-ended team conversations.
+  3. **The Phone Booths:** Individual private cubicles designed for focused, confidential 1-on-1 audio chats.
+  4. **Open Desks:** The central workstation pods where team members work; avatars must be within 100 px (`EARSHOT_PX`) to communicate.
+  5. **Meeting Room:** A dedicated conference space structured for focused group audio discussions.
+  6. **Stage:** A broadcast area configured for all-hands presentations to the entire office.
 
 **Tomorrow**
-- Form tomorrow i am going to start on working the designing of the office world i have visioned for myself.
+- Begin coding `WorldCanvas.jsx` and implement the 60 FPS requestAnimationFrame game loop.
 ---
 
 ## Tue 20 Oct 2026 — Task 2: Canvas component & game loop with FPS counter
@@ -281,5 +307,39 @@
 
 **Tomorrow**
 - Finalize sprite sheet integration in code, draw player name badges above avatars with rounded background tags, and prepare the mid-review demo presentation.
+
+---
+
+## Sat 31 Oct 2026 — Tasks 9 & 10: Avatar badge styling, sprite pipeline & mid review freeze
+
+**What I built**
+- Designed and added rounded pill name badges for avatars in `WorldCanvas.jsx` to improve text legibility against complex floor tiles and furniture.
+- Centered the player and peer name badges using canvas text metrics (`ctx.measureText(name)`) and styled them with dark semi-transparent backgrounds and rounded corners.
+- Tested the 2.5D visual depth sorting rule: characters are rendered with their feet on the current tile while their upper body (-16 px vertical offset) naturally layers in front of or behind objects.
+- Conducted the Week 2 Mid-Review code freeze check with the team, verifying that 2D world movement, wall collision, interpolation, and spatial audio frame reporting (`onFrame`) are stable with zero console warnings.
+- Compiled our milestone summary table and viva study notes reviewing our first two weeks of development.
+
+**How it works (in my own words)**
+- Drawing raw text directly onto a detailed canvas makes names hard to read when characters walk across busy patterns (like colorful carpets, plants, or wooden desks). A **name badge pill** solves this:
+  1. We measure the text's physical pixel width using `ctx.measureText(name).width`.
+  2. We draw a dark semi-transparent rectangle (`rgba(15, 23, 42, 0.75)`) with rounded corners centered behind the text, giving it a 6 px horizontal padding and 3 px vertical padding.
+  3. Setting `ctx.textAlign = 'center'` and `ctx.textBaseline = 'middle'` places the text right in the middle of the pill regardless of string length.
+- For our **Mid Review Freeze**, our module guarantees three core contracts:
+  1. **Performance:** The canvas draws at 60 FPS using `requestAnimationFrame`, with delta-time clamping (`MAX_DELTA_SEC = 0.05`) ensuring smooth movement across all screen refresh rates.
+  2. **Interactivity:** WASD and Arrow key controls support 8-direction walking with diagonal speed normalization ($\times 0.7071$) and tile-based wall collision with sliding.
+  3. **Multiplayer & Audio integration:** Remote peers glide smoothly via exponential decay interpolation, and every frame reports exact world coordinates to Person 4's spatial audio mixer via `onFrame`.
+
+**Problems and how I fixed them**
+- **Badge text jumping on different browsers:** Different browsers handle default canvas font baselines slightly differently, causing text to look slightly off-center. Explicitly setting `ctx.textBaseline = 'middle'` and centering on the badge's Y coordinate resolved the alignment inconsistencies.
+- **Top-wall badge clipping:** When a player walks to the top border of the office (Row 0), their name tag positioned above their head could be cut off by the canvas boundary. Added clamping (`Math.max(12, badgeY)`) so badges stay comfortably visible within the canvas viewport.
+
+**What I learned**
+- How to measure and render dynamic UI overlays on a 2D HTML5 canvas without using heavy HTML DOM elements over the canvas.
+- What a "Code Freeze" means in engineering: locking new feature development before a milestone review so the entire team can test a stable, predictable version of the codebase.
+- How to summarize and explain technical decisions clearly for our upcoming oral viva.
+
+**Tomorrow**
+- Begin Week 3: study zone definitions (`zones` layer in Tiled: Meeting Room, Lounge, Booths, Stage) to prepare handoff for Person 2's geospatial engine and Person 4's zone acoustic filters.
+
 
 
