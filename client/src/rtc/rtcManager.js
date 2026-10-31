@@ -18,20 +18,39 @@ import { EVENTS } from '@shared/events.js';
 // so it can hand that address to the other browser as a candidate.
 const STUN_SERVER = { urls: 'stun:stun.l.google.com:19302' };
 
+// Has buildIceServers already logged its list? We log it once per page, not once per manager.
+let iceServersLogged = false;
+
 /**
  * The ICE servers every connection uses: Google's STUN, plus our TURN relay if one is configured.
- * TURN passes the audio along when routers block a direct connection. VITE_TURN_URL is unset
- * for now (Week 4). Vite only gives the browser env variables that start with VITE_.
+ * TURN passes the audio along when routers block a direct connection (Week 4).
+ *
+ * The TURN settings come from the root .env file (client/vite.config.js sets envDir to the repo
+ * root). Vite only gives the browser env variables that start with VITE_. A TURN server needs
+ * all three: the address, a user name and a password ("credential"). If any one is missing we
+ * leave TURN out, because a half-set TURN entry would only fail.
+ *
+ * Example: nothing set           → [{ urls: 'stun:stun.l.google.com:19302' }]
+ *          all three VITE_TURN_* → [STUN, { urls: 'turn:…:3478', username: '…', credential: '…' }]
  */
 function buildIceServers() {
   const iceServers = [STUN_SERVER];
+
   const turnUrl = import.meta.env.VITE_TURN_URL;
-  if (turnUrl) {
-    iceServers.push({
-      urls: turnUrl,
-      username: import.meta.env.VITE_TURN_USERNAME,
-      credential: import.meta.env.VITE_TURN_CREDENTIAL,
-    });
+  const turnUsername = import.meta.env.VITE_TURN_USERNAME;
+  const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL;
+  const turnIsComplete = Boolean(turnUrl && turnUsername && turnCredential);
+
+  if (turnIsComplete) {
+    iceServers.push({ urls: turnUrl, username: turnUsername, credential: turnCredential });
+  }
+
+  if (!iceServersLogged) {
+    iceServersLogged = true;
+    // Only the addresses: the TURN password must never appear in the console.
+    const addresses = iceServers.map((server) => server.urls).join(', ');
+    const turnNote = turnIsComplete ? '' : ' (no TURN: VITE_TURN_URL, VITE_TURN_USERNAME and VITE_TURN_CREDENTIAL are not all set)';
+    console.log(`[rtc] ICE servers: ${addresses}${turnNote}`);
   }
   return iceServers;
 }
@@ -114,7 +133,8 @@ export function createRtcManager({ net, selfId, micStream, onRemoteStream, onPee
     pc.onconnectionstatechange = () => {
       console.log(`[rtc] connection to ${id}: ${pc.connectionState}`);
       if (pc.connectionState === 'failed') {
-        // No automatic retry yet (Task 11). Close it so the page doesn't keep a dead connection.
+        // No automatic retry: close it so the page doesn't keep a dead connection.
+        // Walking out of earshot and back in makes a fresh one.
         closePeer(id);
       }
     };

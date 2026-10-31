@@ -2,7 +2,7 @@
 // The browser's one connection to the server. Every module uses `net`:
 // the world sends positions through it, and WebRTC passes its setup notes through it.
 // Exact names and payloads: CONTRACTS.md, sections 4 and 7.
-// Plan: docs/briefs/module-1-signaling-webrtc.md, Task 4.
+// Plan: docs/briefs/module-1-signaling-webrtc.md, Task 4 (re-join after a reconnect: Task 11).
 
 import { io } from 'socket.io-client';
 import { EVENTS } from '@shared/events.js';
@@ -12,7 +12,7 @@ import { EVENTS } from '@shared/events.js';
 // (Vite only passes env variables that start with VITE_ to the browser.)
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
-// How long connect() waits for the server's reply before giving up.
+// How long connect() (and an automatic re-join) waits for the server's reply before giving up.
 // Only this file uses it, so it lives here, not in shared/constants.js.
 const JOIN_TIMEOUT_MS = 5000;
 
@@ -20,6 +20,11 @@ const JOIN_TIMEOUT_MS = 5000;
 // autoConnect: false means "create it, but don't dial the server yet".
 // So other modules can register listeners (net.onPlayerJoined, …) BEFORE we connect,
 // and nothing is missed; we only dial when someone calls net.connect().
+//
+// If the connection drops (server restarted, wifi blip), Socket.io dials again by itself, on
+// this SAME socket object. That is why every socket.on(...) listener below, and every listener
+// added with net.onPlayersState(...) etc., keeps working after a reconnect: they are attached
+// to the object that survives. Only the socket id changes.
 const socket = io(SERVER_URL, { autoConnect: false });
 
 // What we know after joining. Both are null until the server sends WORLD_INIT.
@@ -30,24 +35,92 @@ let joinResult = null; // the whole WORLD_INIT payload, so connect() can return 
 // If connect() is called twice quickly, both calls get this same promise, so we only join once.
 let pendingJoin = null;
 
+// The name this tab joined with. null until the first join works. If it is set, this tab
+// was in the office, so after a reconnect we join again with the same name.
+let joinedName = null;
+
+// Everyone who wants to know about a re-join (net.onRejoin). A Set holds each callback once.
+const rejoinCallbacks = new Set();
+
+// If a re-join is waiting for its WORLD_INIT, this function cancels it (removes its listeners).
+let cancelRejoin = null;
+
 // Am I in the office? Moves and signals are only sent after joining.
 function isJoined() {
   return selfId !== null;
 }
 
 // Console logs, so we can see what the connection is doing (open DevTools → Console).
+// On a reconnect after this tab had joined, we also join again (rejoin, below).
 socket.on('connect', () => {
   console.log(`[net] connected to ${SERVER_URL} as ${socket.id}`);
+  if (joinedName !== null && pendingJoin === null) {
+    rejoin();
+  }
 });
 
 // If the connection drops (server restarted, wifi lost), the server forgets us.
 // So we forget the join too: a stale selfId would be wrong after reconnecting,
-// because the server gives every new connection a new id.
+// because the server gives every new connection a new id. While selfId is null,
+// sendMove and sendSignal send nothing (otherwise Socket.io would store them and
+// send them, out of date, the moment it reconnects).
 socket.on('disconnect', (reason) => {
   console.log(`[net] disconnected: ${reason}`);
   selfId = null;
   joinResult = null;
+  if (cancelRejoin !== null) {
+    cancelRejoin(); // a re-join was waiting; the next 'connect' starts a fresh one
+  }
 });
+
+/**
+ * Join again after Socket.io reconnected by itself. Called from the 'connect' listener.
+ *
+ * Why? After a server restart or a network blip, the server has forgotten us: we are a
+ * brand-new socket with a new id, not in the office. So we send EVENTS.JOIN with the same
+ * name, store the fresh WORLD_INIT (new selfId), and tell every onRejoin callback, so the
+ * page can rebuild what depended on the old id (the rtc manager, the world).
+ *
+ * Example: I was 'a1'. The server restarts. Socket.io reconnects as 'c3'. We send
+ *          { name: 'Riya' }, get WORLD_INIT { selfId: 'c3', … }, and call cb({ selfId: 'c3', … }).
+ */
+function rejoin() {
+  console.log(`[net] reconnected; joining again as ${joinedName}`);
+
+  const timer = setTimeout(() => {
+    stopWaiting();
+    console.warn(
+      `[net] re-join got no answer within ${JOIN_TIMEOUT_MS} ms. Reload the page to join again.`,
+    );
+  }, JOIN_TIMEOUT_MS);
+
+  function handleWorldInit(payload) {
+    stopWaiting();
+    selfId = payload.selfId;
+    joinResult = payload;
+    console.log(`[net] re-joined ${payload.roomId} as ${joinedName} (${payload.selfId})`);
+
+    // Tell everyone. One callback that throws must not stop the others.
+    for (const cb of rejoinCallbacks) {
+      try {
+        cb({ selfId: payload.selfId, roomId: payload.roomId, spawn: payload.spawn, players: payload.players });
+      } catch (error) {
+        console.warn('[net] an onRejoin callback threw:', error);
+      }
+    }
+  }
+
+  function stopWaiting() {
+    clearTimeout(timer);
+    socket.off(EVENTS.WORLD_INIT, handleWorldInit);
+    cancelRejoin = null;
+  }
+
+  cancelRejoin = stopWaiting;
+  // Listen first, then send, so a very fast reply can't be missed.
+  socket.on(EVENTS.WORLD_INIT, handleWorldInit);
+  socket.emit(EVENTS.JOIN, { name: joinedName });
+}
 
 // Show every server error in the console (for example BAD_MOVE), so mistakes are visible.
 socket.on(EVENTS.SERVER_ERROR, ({ code, message }) => {
@@ -100,6 +173,7 @@ function connect({ name }) {
       selfId = payload.selfId;
       joinResult = payload;
       pendingJoin = null;
+      joinedName = name; // from now on, a reconnect joins again with this name
       console.log(`[net] joined ${payload.roomId} as ${name} (${payload.selfId})`);
       resolve(payload);
     }
@@ -230,6 +304,25 @@ function onSignal(cb) {
 }
 
 /**
+ * Be told when this tab joined AGAIN by itself, after a server restart or a network blip.
+ * cb gets the fresh WORLD_INIT data: { selfId, roomId, spawn, players }. selfId is NEW,
+ * so everything that used the old id must be rebuilt (e.g. the rtc manager).
+ * Not called for the first join: that answer comes from connect().
+ *
+ * Example: const stop = net.onRejoin(({ selfId }) => { …make a new rtc manager… });  …later…  stop();
+ *
+ * @param {(init: { selfId: string, roomId: string, spawn: { x: number, y: number },
+ *   players: Array<{ id: string, name: string, x: number, y: number, dir: string }> }) => void} cb
+ * @returns {() => void} unsubscribe function
+ */
+function onRejoin(cb) {
+  rejoinCallbacks.add(cb);
+  return () => {
+    rejoinCallbacks.delete(cb);
+  };
+}
+
+/**
  * Send a WebRTC setup note (EVENTS.SIGNAL { to, data }) to one other browser through the server.
  * data is { type: 'offer' | 'answer', sdp } or { type: 'candidate', candidate }.
  * The server adds `from` itself, so we never send it.
@@ -254,5 +347,6 @@ export const net = {
   onPlayerLeft,
   onPeersUpdate,
   onSignal,
+  onRejoin,
   sendSignal,
 };

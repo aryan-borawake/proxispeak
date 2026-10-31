@@ -96,6 +96,7 @@ export function RtcLab() {
   const rtcRef = useRef(null); // the rtc manager
   const namesRef = useRef({}); // id → name, so log lines can say "Tab-042" instead of an id
   const lastStatesRef = useRef({}); // id → last connection state we logged
+  const myNameRef = useRef(''); // the name I joined with (the re-join listener reads it)
 
   /** Add one line to the event log, e.g. "14:02:07 sent offer to Tab-042". Keeps the newest 20. */
   function addLog(text) {
@@ -167,6 +168,48 @@ export function RtcLab() {
     };
   }, []);
 
+  // Re-join after a server restart or a network blip (net joins again by itself, Task 11).
+  // The old connections used ids that no longer exist, so we hang up on all of them and make
+  // a new rtc manager with the NEW selfId and the same microphone. Registered at mount and
+  // removed in the cleanup, like the listeners above. (It keeps the first render's copy of
+  // startRtcManager. That is safe: it only uses refs and state setters, which never change.)
+  useEffect(() => {
+    const stopRejoin = net.onRejoin(({ selfId, spawn, players: alreadyHere }) => {
+      // We never joined on this page (no manager, no microphone): nothing to rebuild.
+      if (!rtcRef.current || !micRef.current) {
+        return;
+      }
+      addLog(`re-joined after a reconnect: new id ${shortId(selfId)}`);
+
+      // 1. Old manager out (its onPeerClosed removes every old voice), new one in, straight
+      //    away, before the first peers:update for the new id can arrive.
+      rtcRef.current.closeAll();
+      rtcRef.current = startRtcManager(selfId, micRef.current);
+
+      // 2. The server put us back at the spawn point. Send our old position, so we stay put.
+      const position = myPosRef.current || { x: spawn.x, y: spawn.y };
+      myPosRef.current = position;
+      net.sendMove({ x: position.x, y: position.y, dir: 'down' });
+
+      // 3. Refresh the page: the new id, and the people online now (their ids may be new too).
+      const myName = myNameRef.current;
+      namesRef.current[selfId] = myName;
+      for (const player of alreadyHere) {
+        namesRef.current[player.id] = player.name;
+      }
+      const next = { [selfId]: { id: selfId, name: myName, x: position.x, y: position.y, dir: 'down' } };
+      for (const player of alreadyHere) {
+        next[player.id] = player;
+      }
+      setPlayers(next);
+      setMe((previous) => (previous ? { ...previous, id: selfId } : previous));
+      setMyPos(position);
+      lastStatesRef.current = {};
+      setPeerStates([]);
+    });
+    return stopRejoin;
+  }, []);
+
   // When the page really goes away: hang up on everyone and switch the microphone off.
   // During StrictMode's practice unmount nothing has been created yet, so this does nothing.
   useEffect(() => {
@@ -213,6 +256,42 @@ export function RtcLab() {
     return () => clearInterval(timer);
   }, [status]);
 
+  /**
+   * Make an rtc manager for my id. Used by Join, and again after a re-join (new id).
+   *
+   * loggingNet is `net` with one change: sendSignal also writes a log line, so the page
+   * can show every note we send. Everything else is the real net, untouched.
+   */
+  function startRtcManager(selfId, micStream) {
+    const loggingNet = {
+      ...net,
+      sendSignal(signal) {
+        addLog(`sent ${signal.data.type} to ${nameOf(signal.to)}`);
+        net.sendSignal(signal);
+      },
+    };
+    return createRtcManager({
+      net: loggingNet,
+      selfId,
+      micStream,
+      onRemoteStream: (id, stream) => {
+        addLog(`audio arrived from ${nameOf(id)}`);
+        setRemoteStreams((previous) => ({ ...previous, [id]: stream }));
+      },
+      onPeerClosed: (id) => {
+        addLog(`connection to ${nameOf(id)} closed`);
+        setRemoteStreams((previous) => {
+          const next = { ...previous };
+          delete next[id];
+          return next;
+        });
+      },
+      onPeerMode: (id, mode) => {
+        addLog(`mode for ${nameOf(id)}: ${mode}`);
+      },
+    });
+  }
+
   async function handleJoin() {
     setStatus('joining');
     setErrorText('');
@@ -244,39 +323,11 @@ export function RtcLab() {
     // 3. Create the rtc manager IMMEDIATELY, with no other `await` before it.
     //    Why: the first peers:update (and maybe an offer) can arrive soon after joining.
     //    The manager must already be listening, or that message is missed and we never connect.
-    //
-    //    loggingNet is `net` with one change: sendSignal also writes a log line, so the page
-    //    can show every note we send. Everything else is the real net, untouched.
-    const loggingNet = {
-      ...net,
-      sendSignal(signal) {
-        addLog(`sent ${signal.data.type} to ${nameOf(signal.to)}`);
-        net.sendSignal(signal);
-      },
-    };
-    rtcRef.current = createRtcManager({
-      net: loggingNet,
-      selfId: init.selfId,
-      micStream,
-      onRemoteStream: (id, stream) => {
-        addLog(`audio arrived from ${nameOf(id)}`);
-        setRemoteStreams((previous) => ({ ...previous, [id]: stream }));
-      },
-      onPeerClosed: (id) => {
-        addLog(`connection to ${nameOf(id)} closed`);
-        setRemoteStreams((previous) => {
-          const next = { ...previous };
-          delete next[id];
-          return next;
-        });
-      },
-      onPeerMode: (id, mode) => {
-        addLog(`mode for ${nameOf(id)}: ${mode}`);
-      },
-    });
+    rtcRef.current = startRtcManager(init.selfId, micStream);
 
     // 4. Fill the page: the people already here, plus me.
     const { selfId, spawn, players: alreadyHere } = init;
+    myNameRef.current = name;
     namesRef.current[selfId] = name;
     for (const player of alreadyHere) {
       namesRef.current[player.id] = player.name;

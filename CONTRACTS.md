@@ -1,6 +1,6 @@
 # ProxiSpeak Contracts
 
-**v3 — 27 Oct 2026**
+**v4 — 29 Oct 2026**
 
 This file is the single source of truth for how the four modules talk to each other: every event name, payload, function, database shape and file format. If your code and this file disagree, this file wins.
 
@@ -168,6 +168,8 @@ net.connect({ name })          // → Promise<{ selfId, roomId, spawn, players }
 net.sendMove({ x, y, dir })
 net.onPlayersState(cb) / onPlayerJoined(cb) / onPlayerLeft(cb) / onPeersUpdate(cb) / onSignal(cb)
                                // each returns an unsubscribe function
+net.onRejoin(cb)               // cb({ selfId, roomId, spawn, players }) after an automatic re-join;
+                               // returns an unsubscribe function
 net.sendSignal({ to, data })
 
 // client/src/rtc/index.js (Person 1)
@@ -197,6 +199,7 @@ Notes:
 
 - An **unsubscribe function** stops a callback from being called. Example: `const stop = net.onPlayerLeft(cb);` … later `stop();`.
 - `onSignal(cb)` receives the delivered shape `{ from, data }`.
+- `onRejoin(cb)`: if the connection drops after joining (server restart, network blip), Socket.io reconnects by itself and `net` sends `JOIN` again with the same name. `cb` then gets the fresh `WORLD_INIT` data. The `selfId` is **new** (every old id is dead), so rebuild whatever used the old one: a new rtc manager, and a remounted `WorldCanvas` (`key={selfId}`). It is not called for the first join (that answer comes from `connect()`). Listeners added with the other `on…` functions keep working after a reconnect. `WorldCanvas` never calls `onRejoin`, so `createFakeNet` does not have to add it.
 - `net.sendMove` is called at most `MOVE_SEND_HZ` times a second, and only when the player actually moved.
 - `createFakeNet` returns an object with exactly the same functions as `net`, so `WorldCanvas` can't tell the difference.
 - `dxToPan(dx)`: `dx` = speaker's x minus my x. Example: speaker 30 px to my right → `dx = 30` → a positive pan.
@@ -312,3 +315,4 @@ Layers, in this order and with exactly these names:
 | v1 | 19 Oct 2026 | Zone rules: which map areas use which zone type. Server interfaces: `connectDb(uri)` doesn't read `.env`; the caller passes `process.env.MONGODB_URI` |
 | v2 | 21 Oct 2026 | Added ERROR_CODES (BAD_NAME, ALREADY_JOINED, NOT_JOINED, BAD_MOVE) to shared/constants.js; SERVER_ERROR `code` uses them |
 | v3 | 27 Oct 2026 | Added `BAD_SIGNAL` to ERROR_CODES. Signaling rule 5: the server relays a `SIGNAL` only between peers within earshot, otherwise it replies `SERVER_ERROR` `BAD_SIGNAL` |
+| v4 | 29 Oct 2026 | Added `net.onRejoin(cb)` (section 7): after a reconnect, `net` joins again by itself and calls `cb({ selfId, roomId, spawn, players })` with the new id |

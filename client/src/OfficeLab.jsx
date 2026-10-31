@@ -24,6 +24,9 @@ import { createMixer, AudioControls } from './audio/index.js';
 // (Not every frame: React redrawing the page 60 times a second would slow the game down.)
 const PANEL_REFRESH_MS = 500;
 
+// The way my avatar faces after a re-join. WorldCanvas also starts every avatar facing down.
+const REJOIN_DIR = 'down';
+
 // Keys the world uses for walking. Normally they would also scroll the page up and down.
 const ARROW_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
 
@@ -77,6 +80,7 @@ export function OfficeLab() {
   const micRef = useRef(null); // the microphone stream, so we can stop it when leaving
   const frameRef = useRef(null); // the latest frame from WorldCanvas (60 times a second)
   const namesRef = useRef({}); // id → name, so the panel can show names instead of ids
+  const myNameRef = useRef(''); // the name I joined with (the re-join listener reads it)
 
   // Keep track of everyone's names. These listeners are set up at mount and removed in the
   // cleanup, so StrictMode's mount → unmount → mount leaves exactly one set listening.
@@ -91,6 +95,47 @@ export function OfficeLab() {
       stopJoined();
       stopLeft();
     };
+  }, []);
+
+  // Re-join after a server restart or a network blip (net joins again by itself, Task 11).
+  // We get a NEW selfId, and every old id (mine and everyone else's) is dead. So:
+  //   1. closeAll() the old rtc manager. Its onPeerClosed takes each old voice out of the mixer.
+  //   2. Make a new rtc manager with the new selfId, the same microphone and the same mixer,
+  //      straight away, before the first peers:update for the new id can arrive.
+  //   3. Stay where I was: the server put me back at the spawn point, so send my last position
+  //      (from the latest frame) once with net.sendMove.
+  //   4. Give WorldCanvas the new id. It only reads selfId and spawn when it first starts, so
+  //      we remount it with key={selfId} (a new key makes React throw the old one away and build
+  //      a fresh one). Without that, the world would draw my new id as "someone else".
+  // Example: I was 'a1' at (412, 300). The server restarts; I come back as 'c3'. The new world
+  //          starts at (412, 300) and the server hears "c3 is at (412, 300)".
+  useEffect(() => {
+    const stopRejoin = net.onRejoin(({ selfId, spawn, players }) => {
+      const mixer = mixerRef.current;
+      const stream = micRef.current;
+      // We never joined on this page: nothing to rebuild.
+      if (!rtcRef.current || !mixer || !stream) {
+        return;
+      }
+      console.log(`[office] re-joined as ${selfId}; rebuilding voice connections and the world`);
+
+      rtcRef.current.closeAll();
+      rtcRef.current = startRtcManager(selfId, stream, mixer);
+
+      // Where I was in the last frame, or the server's spawn if the world never drew a frame.
+      const lastSelf = frameRef.current?.self;
+      const position = lastSelf ? { x: lastSelf.x, y: lastSelf.y } : { x: spawn.x, y: spawn.y };
+      net.sendMove({ x: position.x, y: position.y, dir: REJOIN_DIR });
+
+      // The old frame has old ids in it; the remounted world sends a fresh one.
+      frameRef.current = null;
+      namesRef.current[selfId] = myNameRef.current;
+      for (const player of players) {
+        namesRef.current[player.id] = player.name;
+      }
+      setJoinInfo({ selfId, spawn: position, players });
+    });
+    return stopRejoin;
   }, []);
 
   // onFrame: WorldCanvas calls this every animation frame with
@@ -192,20 +237,13 @@ export function OfficeLab() {
     // 4. The rtc manager, IMMEDIATELY (no other `await` before it). The first EVENTS.PEERS_UPDATE,
     //    and maybe an offer, can arrive very soon after joining; the manager must already be
     //    listening, or we miss it and never connect to that person.
-    //    Every voice goes into the mixer, never into an <audio> element.
-    rtcRef.current = createRtcManager({
-      net,
-      selfId: result.selfId,
-      micStream: stream,
-      onRemoteStream: (id, remoteStream) => mixer.addPeer(id, remoteStream),
-      onPeerClosed: (id) => mixer.removePeer(id),
-      onPeerMode: (id, mode) => mixer.setMode(id, mode),
-    });
+    rtcRef.current = startRtcManager(result.selfId, stream, mixer);
 
     // 5. Remember everyone already in the room, then show the world.
     for (const player of result.players) {
       namesRef.current[player.id] = player.name;
     }
+    myNameRef.current = name.trim();
     namesRef.current[result.selfId] = name.trim();
     setJoinInfo({ selfId: result.selfId, spawn: result.spawn, players: result.players });
     setMicStream(stream);
@@ -253,7 +291,9 @@ export function OfficeLab() {
           <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             {/* minWidth 0 lets the canvas shrink in a narrow window instead of overflowing. */}
             <div style={{ flex: '1 1 600px', minWidth: 0 }}>
+              {/* key={selfId}: after a re-join (new id) React builds a fresh WorldCanvas. */}
               <WorldCanvas
+                key={joinInfo.selfId}
                 net={net}
                 selfId={joinInfo.selfId}
                 spawn={joinInfo.spawn}
@@ -268,6 +308,21 @@ export function OfficeLab() {
       )}
     </section>
   );
+}
+
+/**
+ * Make an rtc manager whose voices go into the mixer, never into an <audio> element.
+ * Used by Join, and again after a re-join (new selfId, same microphone, same mixer).
+ */
+function startRtcManager(selfId, micStream, mixer) {
+  return createRtcManager({
+    net,
+    selfId,
+    micStream,
+    onRemoteStream: (id, remoteStream) => mixer.addPeer(id, remoteStream),
+    onPeerClosed: (id) => mixer.removePeer(id),
+    onPeerMode: (id, mode) => mixer.setMode(id, mode),
+  });
 }
 
 /**

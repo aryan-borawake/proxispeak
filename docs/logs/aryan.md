@@ -112,3 +112,12 @@ Tested by hand: two tabs hear each other; 150 px apart disconnects, back to 100 
   re-join after a server restart, disconnect-reason logging, server/scripts/reconnect-test.js.
 - Next: design call with Anjali (login, lobby, office, admin screens), asset licence decision
   (Kenney CC0 vs LimeZu), Weeks 3–4 task calendar for all four modules.
+  ## 30 Oct 2026 — Task 11: reconnects, start-up checks, env and TURN
+- At start-up the server now tests the geo engine with two probe users 14 px apart; the stub fails,
+  so it falls back to fakeNearby and says why. Person 2's real engine on dev passes.
+- After a server restart or wifi blip, net joins again by itself with the same name and calls
+  onRejoin with the new id; the pages rebuild the rtc manager and remount the world at my old spot.
+- Vite now reads the root .env; TURN is used only when all three VITE_TURN_* are set.
+- Learned: Socket.io reconnects on the same socket object, so listeners survive, but the id changes,
+  and the server treats me as a stranger until I join again.
+ 

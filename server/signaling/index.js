@@ -5,7 +5,8 @@
 //
 // Built so far: join and disconnect (Task 2); MOVE, the PLAYERS_STATE broadcast and
 // PLAYER_LEFT (Task 3); the proximity tick (Task 6, tick.js); SIGNAL note passing between
-// peers in earshot (Task 8); Person 2's geo engine, with fakeNearby.js as the fallback (Task 9).
+// peers in earshot (Task 8); Person 2's geo engine, with fakeNearby.js as the fallback (Task 9);
+// the geo self-check at start-up (geoSelfCheck.js) and disconnect reasons in the log (Task 11).
 
 import { EVENTS } from '../../shared/events.js';
 import {
@@ -54,8 +55,10 @@ export function attachSignaling(io, { geo }) {
       handleSignal(io, socket, payload);
     });
 
-    socket.on('disconnect', () => {
-      handleDisconnect(io, socket, geo);
+    // `reason` is Socket.io's explanation, e.g. 'transport close' (tab closed, wifi lost,
+    // page refreshed) or 'client namespace disconnect' (the page called socket.disconnect()).
+    socket.on('disconnect', (reason) => {
+      handleDisconnect(io, socket, geo, reason);
     });
   });
 
@@ -320,19 +323,26 @@ function startStateBroadcast(io) {
 }
 
 /**
- * A browser closed its tab or lost its connection.
+ * A browser closed its tab, refreshed the page, or lost its connection.
  * Socket.io removes it from its rooms by itself; we remove it from our store
  * and tell everyone still in the room, so they can delete that character.
+ *
+ * A refreshed tab is simply a new connection: it gets a new socket id and joins again as a
+ * new player. A browser that reconnects after a network blip also gets a new id; its net
+ * module sends EVENTS.JOIN again by itself (client/src/net, Task 11).
+ *
+ * Example log: "[signaling] disconnect a1 (Riya): transport close"
  */
-function handleDisconnect(io, socket, geo) {
+function handleDisconnect(io, socket, geo, reason) {
   const player = getPlayer(socket.id);
   const wasRemoved = removePlayer(socket.id);
 
   // Someone who never joined has no character on anyone's screen, so there is nobody to tell.
   if (!wasRemoved) {
-    console.log(`[signaling] socket disconnected before joining: ${socket.id}`);
+    console.log(`[signaling] disconnect ${socket.id} (never joined): ${reason}`);
     return;
   }
+  console.log(`[signaling] disconnect ${socket.id} (${player.name}): ${reason}`);
 
   // Take them out of every peer set, and tell each former peer "left" (peers:update),
   // so their browsers close the voice connection.

@@ -1,9 +1,9 @@
-# How the signaling server works (v2)
+# How the signaling server works (v3)
 
-Module 1 · Person 1 (Aryan) · Covers the code on branch `aryan` up to Task 10.
+Module 1 · Person 1 (Aryan) · Covers the code on branch `aryan` up to Task 11.
 
-Files described here: `server/index.js`, `server/signaling/index.js`, `server/signaling/players.js`, `server/signaling/tick.js`, `server/signaling/fakeNearby.js`, `client/src/net/index.js`, `client/src/rtc/mic.js`, `client/src/rtc/rtcManager.js`.
-Event names and payloads come from `CONTRACTS.md` (v3), sections 4–7.
+Files described here: `server/index.js`, `server/signaling/index.js`, `server/signaling/players.js`, `server/signaling/tick.js`, `server/signaling/fakeNearby.js`, `server/signaling/geoSelfCheck.js`, `client/src/net/index.js`, `client/src/rtc/mic.js`, `client/src/rtc/rtcManager.js`.
+Event names and payloads come from `CONTRACTS.md` (v4), sections 4–7.
 
 ---
 
@@ -104,11 +104,13 @@ Every 100 ms (`STATE_BROADCAST_MS`), one timer for the whole server sends `playe
 
 ### Leaving: `player:left`
 
-When a tab closes or the connection drops, Socket.io fires a `disconnect` (`handleDisconnect` in `index.js`):
+When a tab closes, the page is refreshed, or the connection drops, Socket.io fires a `disconnect` with a **reason** (`handleDisconnect` in `index.js`). The server logs it, e.g. `[signaling] disconnect a1 (Riya): transport close`. `transport close` means the connection just went away (tab closed, refresh, wifi lost); `client namespace disconnect` means the page hung up on purpose (`socket.disconnect()`).
 
 1. The server removes the player from the Map. If they never joined, there is nobody to tell, so it stops.
 2. It removes them from every peer set and tells each former peer with `peers:update` (see section 5).
 3. It sends `player:left` with `{ id }` to everyone still in the room, so they can delete that character.
+
+A **refreshed tab** is simply a new connection: a new socket id, and it joins again as a new player. Nothing special is needed.
 
 ---
 
@@ -125,6 +127,7 @@ This file is the browser's one connection to the server. It exports one object, 
 | `net.onPlayerLeft(cb)` | Calls `cb` on every `player:left` |
 | `net.onPeersUpdate(cb)` | Calls `cb` on every `peers:update` |
 | `net.onSignal(cb)` | Calls `cb` on every `rtc:signal` |
+| `net.onRejoin(cb)` | Calls `cb` with the fresh `world:init` data after `net` joined again by itself (see "Re-joining by itself" below) |
 | `net.sendSignal({ to, data })` | Sends `rtc:signal`. Does nothing before joining |
 
 Each `on…` function returns an **unsubscribe function**: call it to stop listening. Example: `const stop = net.onPlayerLeft(cb);` … later `stop();`.
@@ -134,7 +137,28 @@ Details of `connect()`:
 - If already joined, it returns the same answer again. If a join is already on its way, it returns that same Promise, so two quick clicks join only once.
 - It starts listening for `world:init`, `server:error` and `connect_error` *before* connecting, so a fast reply cannot be missed.
 - It fails with a clear error if the server refuses the join (for example `BAD_NAME`), if the server can't be reached, or after 5 seconds with no answer.
-- If the connection drops later, `net` forgets its id, because a new connection gets a new socket id. It does not rejoin by itself yet.
+- If the connection drops later, `net` forgets its id, because a new connection gets a new socket id. While it has no id, `sendMove` and `sendSignal` send nothing.
+
+### Re-joining by itself (Task 11)
+
+When the server restarts or the wifi blips, Socket.io dials again by itself, on the **same socket object**. So every listener (`socket.on(...)`, and everything added with `net.onPlayersState` and the others) keeps working. Only the socket id changes.
+
+But the server has forgotten us: the new connection is a stranger who hasn't joined. So, on every `connect` after this tab had joined once, `net`:
+
+1. sends `player:join` again with the same name;
+2. stores the fresh `world:init` (the **new** `selfId`), so `connect()` and `sendMove` use it;
+3. calls every `net.onRejoin(cb)` callback with `{ selfId, roomId, spawn, players }`.
+
+If no `world:init` comes back within 5 seconds, it logs a warning saying to reload the page.
+
+Example: Riya is `'a1'`. The server restarts. Socket.io reconnects as `'c3'`, `net` sends `{ name: 'Riya' }` and gets `world:init { selfId: 'c3', … }`. Sam's browser sees Riya appear as a new player `'c3'`.
+
+What the pages do with `onRejoin` (old ids are dead, so the old voice connections are useless):
+
+- **`?lab=rtc`**: `closeAll()` on the old rtc manager, a new manager with the new id and the same microphone, `sendMove` with the old position, and the page shows the new id.
+- **`?lab=office`**: `closeAll()` on the old rtc manager (its `onPeerClosed` takes each old voice out of the mixer), a new manager with the new id, `sendMove` once with the last position from `onFrame`, and `WorldCanvas` remounted with `key={selfId}` and that position as `spawn`. Without the new key the world would keep the old id and draw my new id as somebody else.
+
+On a **network blip** (only my connection dropped, the server kept running), the others see `player:left` for my old id and `peers:update` with the old id in `left`, then `player:joined` and, within 250 ms, `peers:update` with my new id in `entered`. `server/scripts/reconnect-test.js` checks exactly this, plus a closed tab and a refreshed tab.
 
 The server address is `VITE_SERVER_URL` from the environment, or `http://localhost:3001` if that is not set.
 
@@ -168,10 +192,14 @@ New players start with `moved = true`. Without that, Riya and Sam could join at 
 
 **Where "who is near" comes from.** At start-up, `server/index.js` tries to start Person 2's geo engine (MongoDB) and passes the result to the tick:
 
-- If `MONGODB_URI` is set in `.env`, it waits for `connectDb` for at most 3 seconds (`Promise.race` against a timer), then calls `createGeoEngine({ roomId: 'office-1' })`. The tick then saves the moved players' positions with one `geo.upsertPositions([{ id, x, y }])` call before asking `geo.findNearby`. When someone disconnects, `geo.removeUser(id)` deletes their saved position.
-- If `MONGODB_URI` is missing, or connecting fails or takes longer than 3 seconds, the server logs `[server] geo engine not available, using fakeNearby: <reason>` and uses `geo = null`. The tick then uses `fakeNearby.js`, which measures straight-line distance (`Math.hypot`) from the in-memory Map and answers in the same format.
+1. If `MONGODB_URI` is not set in `.env`: log `[server] nearby engine: fakeNearby (MONGODB_URI is not set in .env)` and use the fake.
+2. Wait for `connectDb` for at most 3 seconds (`Promise.race` against a timer). If it fails or is too slow: log `[server] geo engine not available, using fakeNearby: <reason>` and use the fake.
+3. **Self-check** (`geoSelfCheck.js`, also at most 3 seconds). A connected database is not enough: the stub on this branch "connects" fine but never finds anyone, so nobody would ever be connected. In a throwaway room, `'__selfcheck__'`, it saves two probe users 14 px apart (`'__probe__'` at (10, 10) and `'__probe2__'` at (20, 20)), asks `findNearby('__probe2__', 100)`, and expects `'__probe__'` in the answer. Then it deletes both probes. If the answer is wrong, something throws, or it takes too long: log `[server] nearby engine: fakeNearby (geo self-check failed: <reason>)` and use the fake.
+4. All passed: call `createGeoEngine({ roomId: 'office-1' })` and log `[server] nearby engine: geo (Person 2, MongoDB)`. The tick then saves the moved players' positions with one `geo.upsertPositions([{ id, x, y }])` call before asking `geo.findNearby`. When someone disconnects, `geo.removeUser(id)` deletes their saved position.
 
-The server always logs which one is in use. `computePeerChanges` always comes from `fakeNearby.js`, for both paths: it is a pure function, so it only needs the distances, wherever they came from (Person 2's identical, tested copy is `server/geo/peerChanges.js` on `dev`). On this branch `server/geo/` is still the stub, so without a `.env` the server uses `fakeNearby`.
+With the fake, `geo = null` and the tick uses `fakeNearby.js`, which measures straight-line distance (`Math.hypot`) from the in-memory Map and answers in the same format.
+
+The server always logs one `nearby engine: …` line. `computePeerChanges` always comes from `fakeNearby.js`, for both paths: it is a pure function, so it only needs the distances, wherever they came from (Person 2's identical, tested copy is `server/geo/peerChanges.js` on `dev`). On this branch `server/geo/` is still the stub, so even with MongoDB running the self-check fails and the server uses `fakeNearby`. With Person 2's real engine (on `dev`) the self-check passes.
 
 If `upsertPositions` fails (for example MongoDB went down), that tick is skipped and logged, and the moved flags are switched back on, so those players are checked again next tick. A failed `removeUser` is only logged.
 
@@ -251,7 +279,7 @@ Words first:
 - **WebRTC** is the browser's built-in way to send audio straight to another browser. One **RTCPeerConnection** is one direct connection to one person; each browser makes one per nearby person.
 - The **offer** is the first note: "I want to send you audio; here are the audio formats I support". The **answer** is the reply: "okay, here are mine". Both carry their details as **SDP** text, which we never read, only pass along.
 - An **ICE candidate** is a note saying "here is a network address where you might reach me". Each browser finds a few and sends each one as soon as it is found.
-- **STUN** is a free helper server (we use Google's, `stun:stun.l.google.com:19302`) that tells a browser its public internet address, so it can offer that address as a candidate. A **TURN** relay is added only if `VITE_TURN_URL` is set, and it isn't yet.
+- **STUN** is a free helper server (we use Google's, `stun:stun.l.google.com:19302`) that tells a browser its public internet address, so it can offer that address as a candidate. A **TURN** relay passes the audio along when routers block a direct connection. It is added only if all three of `VITE_TURN_URL`, `VITE_TURN_USERNAME` and `VITE_TURN_CREDENTIAL` are set in the root `.env` (`client/vite.config.js` sets `envDir` to the repo root, so the client reads the same `.env` as the server). They aren't set yet (Week 4). The first rtc manager logs once which ICE servers it uses, e.g. `[rtc] ICE servers: stun:stun.l.google.com:19302`; it never logs the TURN password.
 
 ### Example: Riya ('a1') and Sam ('b7')
 
@@ -261,7 +289,7 @@ Words first:
 4. **The answer.** Sam receives the offer, stores it as the other side's description (`setRemoteDescription`), creates the answer, stores it, and sends `{ type: 'answer', sdp }`. If the offer reaches Sam before his own `peers:update`, he creates the connection right then. Riya uses the answer only if she is waiting for one (her connection is in the `have-local-offer` state).
 5. **ICE candidates.** Both browsers send each candidate they find as `{ type: 'candidate', candidate }`. The browsers try the addresses until one works, and the connection state goes `new` → `connecting` → `connected`.
 6. **Voices.** When the other person's audio arrives (`ontrack`), the manager calls `onRemoteStream(id, stream)` once, and the lab page plays it in an `<audio>` element.
-7. **They walk apart.** At more than 140 px, `peers:update` lists the other person in `left`. Both browsers close the connection and call `onPeerClosed(id)`, and the page removes that `<audio>`. If a connection reaches `failed` (no address worked), it is closed the same way. There is no automatic retry yet.
+7. **They walk apart.** At more than 140 px, `peers:update` lists the other person in `left`. Both browsers close the connection and call `onPeerClosed(id)`, and the page removes that `<audio>`. If a connection reaches `failed` (no address worked), it is closed the same way. There is no automatic retry: walking out of earshot and back in makes a fresh connection.
 
 ### The early-candidate queue
 
@@ -296,7 +324,8 @@ The server only passes notes on (`handleSignal` in `server/signaling/index.js`) 
 
 ## 8. Not built yet
 
-- **The awkward cases, Task 11:** no automatic retry when a connection fails, no special handling of a page refresh, and no TURN settings yet.
+- **Retry of a failed voice connection:** a connection that reaches `failed` is closed, not retried.
+- **A TURN server:** the code reads `VITE_TURN_*`, but there is no TURN server to point it at yet (Week 4).
 - **Person 4's mixer, Week 3:** the lab plays each voice in a plain `<audio>` element at full volume. Volume by distance and left/right panning come from the mixer later.
 
 ---
