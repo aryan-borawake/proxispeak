@@ -21,6 +21,7 @@
 | **29 Oct** | Tasks 7 & 8: Multi-Module Integration | Verified `onFrame` with Person 4's mixer, tested 10 Hz `net.sendMove` with Person 1, validated 100 px audio falloff radius. | ✅ Complete |
 | **30 Oct** | Task 9: Sprite Sheet Pipeline | Researched 32×48 character walk cycles, designed 9-argument `ctx.drawImage` slicing, tested 50 bots at steady 60 FPS in Chrome DevTools. | ✅ Complete |
 | **31 Oct** | Tasks 9 & 10: Badge Styling & Mid Freeze | Added rounded name badge pills, baseline alignment, 2.5D depth offset, and achieved Mid Review code freeze. | ✅ Complete |
+| **1 Nov** | Week 3: Zones & Raycasting | Designed `zones` layer metadata specs, acoustic space rules, and Bresenham line-of-sight raycasting architecture. | 🔄 In Progress |
 
 ---
 
@@ -340,6 +341,44 @@
 
 **Tomorrow**
 - Begin Week 3: study zone definitions (`zones` layer in Tiled: Meeting Room, Lounge, Booths, Stage) to prepare handoff for Person 2's geospatial engine and Person 4's zone acoustic filters.
+
+---
+
+## Sun 1 Nov 2026 — Week 3: Office zones layer setup & metadata handoff architecture
+
+**What I built**
+- Commenced Week 3 development focusing on office zone architecture and acoustic space segmentation.
+- Designed the `zones` layer specifications in Tiled for our 35×25 office map according to `CONTRACTS.md` (`ZONE_TYPES`: `open`, `private`, `silent`, `stage`, `lobby`).
+- Structured zone metadata boundaries for all 6 rooms:
+  1. Lobby (`lobby` zone)
+  2. Meeting Room (`private` zone)
+  3. Phone Booths (`silent` zone)
+  4. Open Desks (`open` zone)
+  5. Lounge (`open` zone)
+  6. Stage (`stage` zone)
+- Researched zone rendering on HTML5 canvas: semi-transparent colored tints (`rgba(...)`) with subtle dashed boundary outlines and room name labels.
+- Researched the 2D Line-of-Sight algorithm (`lineOfSight.js`) using grid-based raycasting to detect whether a straight line between two players intersects a solid wall tile on the `Walls` layer.
+
+**How it works (in my own words)**
+- A **zone** in our virtual office is a defined 2D rectangular area on the map with specific acoustic and communication rules:
+  - In an `open` zone (like Open Desks), volume falls off with distance (`AUDIO_MODES.FALLOFF`).
+  - In a `private` zone (like the Meeting Room), voices cannot leak out to people outside the room, and outside noise cannot enter.
+  - In a `stage` zone, the speaker's voice broadcasts at full volume (`AUDIO_MODES.FULL`) to everyone in the room.
+- In Tiled, we can define zones either as an object layer with named bounding boxes or as a tile/data layer. Object layers store `{ x, y, width, height, type }` metadata. When exported into `office.json`, Person 2 (Pratik) reads these exact bounding coordinates to store them in MongoDB for `$geoWithin` queries.
+- **Line-of-Sight (Raycasting):** In real life, sound is muffled by solid walls. To calculate whether an obstacle blocks audio, `lineOfSight.js` draws a virtual straight line between Player A $(x_1, y_1)$ and Player B $(x_2, y_2)$, sampling along the line. If any tile contains a solid wall, `blocked` is set to `true` in our `onFrame` callback, allowing Person 4's mixer to apply a low-pass audio filter (muffle).
+
+**Problems and how I fixed them**
+- **Overlapping visual clutter:** Drawing solid colored blocks over rooms would obscure our LimeZu floor carpets and desks. Decided to use low opacity fills (`rgba(..., 0.08)`) with clean 1px borders so zones are visually recognizable without compromising the pixel art.
+- **Raycasting performance:** Checking every single pixel between two players would be computationally expensive at 60 FPS. By sampling at tile-width intervals (every 32 pixels along the ray), the check requires at most 3 to 4 checks across a 100 px `EARSHOT_PX` distance, keeping execution time well under 0.1 ms per frame.
+
+**What I learned**
+- What Bresenham's line algorithm and raycasting mean in 2D grid games, and how grid-based stepping keeps collision and line-of-sight checks fast.
+- How spatial audio zones interact with the geospatial engine: the visual world renders the zone boundaries, while the backend geospatial engine enforces room privacy rules.
+- How audio occlusion (muffling voices behind walls) enhances spatial realism in proximity voice chat.
+
+**Tomorrow**
+- Add the `zones` layer to `office.tmx` in Tiled, re-export `office.json`, update `map.js` to draw zone tints/labels, and coordinate the handoff with Person 2.
+
 
 
 
