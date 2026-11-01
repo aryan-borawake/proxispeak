@@ -98,6 +98,7 @@ Module 1: Signaling + WebRTC · Branch `aryan` · Team lead
 - At start-up the server tries Person 2's geo engine (3 s limit) and falls back to fakeNearby.
 - Learned: the voice never touches our server; it only carries the setup notes.
 Tested by hand: two tabs hear each other; 150 px apart disconnects, back to 100 px reconnects
+<<<<<<< HEAD
 ## 28 Oct 2026 — Integration day and mid-review prep
 - Merged all four branches into dev through pull requests #1–#6 (merge commits only). The client builds and all four robot tests pass on dev.
 - Built the office page (?lab=office): my net and rtc manager, Anjali's WorldCanvas and Koushik's mixer, wired as CONTRACTS.md section 8. Two windows: same spot = volume 100%, 63 px apart = 30%, past 140 px = disconnected.
@@ -121,3 +122,15 @@ Tested by hand: two tabs hear each other; 150 px apart disconnects, back to 100 
 - Learned: Socket.io reconnects on the same socket object, so listeners survive, but the id changes,
   and the server treats me as a stranger until I join again.
  
+
+## 1 Nov 2026 — Mid review
+- Presented the office page on dev (two windows walking together, voices connecting through the
+  signaling server, mixer volume and pan) and ran the spatial audit for Module 2 (Pratik absent).
+- Audit on my laptop during the call: GEO_NEAR_2D index used, single query about 5 ms, average
+  15.5 ms (target under 20 ms), worst case 20–49 ms because each round fires 50 queries at once and
+  they queue on a busy machine. Pratik's idle-machine run: 9.09 ms average, 15.87 ms worst.
+- Learned: one query's speed (index) and many queries at once (load) are different measurements;
+  the audit script rewrites docs/geo-audit.md on every run, so never commit it from my laptop.
+- [Review outcome / feedback: ...]
+- Next: 50-bot load test with server tick timing, then the nearest-8 connection cap.
+e5c1226 (docs: log mid review and spatial audit results under load)
