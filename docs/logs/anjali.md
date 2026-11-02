@@ -21,7 +21,8 @@
 | **29 Oct** | Tasks 7 & 8: Multi-Module Integration | Verified `onFrame` with Person 4's mixer, tested 10 Hz `net.sendMove` with Person 1, validated 100 px audio falloff radius. | ✅ Complete |
 | **30 Oct** | Task 9: Sprite Sheet Pipeline | Researched 32×48 character walk cycles, designed 9-argument `ctx.drawImage` slicing, tested 50 bots at steady 60 FPS in Chrome DevTools. | ✅ Complete |
 | **31 Oct** | Tasks 9 & 10: Badge Styling & Mid Freeze | Added rounded name badge pills, baseline alignment, 2.5D depth offset, and achieved Mid Review code freeze. | ✅ Complete |
-| **1 Nov** | Week 3: Zones & Raycasting | Designed `zones` layer metadata specs, acoustic space rules, and Bresenham line-of-sight raycasting architecture. | 🔄 In Progress |
+| **1 Nov** | Week 3: Zones & Raycasting | Designed `zones` layer metadata specs, acoustic space rules, and Bresenham line-of-sight raycasting architecture. | ✅ Complete |
+| **2 Nov** | Week 3: Zones Layer & Detection | Integrated zone coordinates, AABB zone detection (`getZoneAt`), UI zone tags, and prepared handoff for Person 2. | 🔄 In Progress |
 
 ---
 
@@ -378,6 +379,41 @@
 
 **Tomorrow**
 - Add the `zones` layer to `office.tmx` in Tiled, re-export `office.json`, update `map.js` to draw zone tints/labels, and coordinate the handoff with Person 2.
+
+---
+
+## Mon 2 Nov 2026 — Week 3: Tiled zones layer integration, visual overlays & zone detection
+
+**What I built**
+- Integrated the `zones` definition layer into the 35×25 office map according to `CONTRACTS.md` (`ZONE_TYPES`: `open`, `private`, `silent`, `stage`, `lobby`).
+- Configured zone boundaries and coordinates in map metadata:
+  1. **Lobby:** cols 0–7, rows 0–9 (`lobby` zone)
+  2. **Meeting Room:** cols 8–21, rows 0–9 (`private` zone)
+  3. **Stage:** cols 26–34, rows 0–9 (`stage` zone)
+  4. **Phone Booths:** cols 0–7, rows 14–24 (`silent` zone)
+  5. **Open Desks:** cols 8–24, rows 10–24 (`open` zone)
+  6. **Lounge:** cols 25–34, rows 10–24 (`open` zone)
+- Added real-time zone detection (`getZoneAt(x, y, map)`) in `client/src/world/map.js` and `WorldCanvas.jsx` to identify which room the player is standing in based on world coordinates.
+- Added visual zone badge rendering on the canvas (e.g. displaying current zone badge: "Zone: Meeting Room (Private)") so the user immediately knows their audio status.
+- Designed semi-transparent floor tint rendering for active zones and prepared the updated zone coordinates for Person 2 (Pratik) for MongoDB `$geoWithin` queries.
+
+**How it works (in my own words)**
+- A zone lookup function (`getZoneAt(x, y)`) takes the avatar's pixel position `(x, y)` and checks which rectangular bounding box `[x, y, width, height]` contains that point. Because tile coordinates are mapped in pixels ($x / 32, y / 32$), checking zone bounds is an $O(1)$ math check ($x \ge \text{zone.x} \text{ and } x < \text{zone.x} + \text{zone.width}$, etc.).
+- When an avatar walks across the doorway from the open corridor into the Meeting Room, the system detects a zone transition (`oldZone !== newZone`). This allows the frontend to update audio mode indicators and informs Person 4's mixer whether to apply `AUDIO_MODES.FULL` (Stage) or `AUDIO_MODES.FALLOFF` (Open Desks).
+- This fulfills the Week 3 handoff contract: Person 3 provides the exact pixel bounding boxes of every zone so Person 2 can seed them into MongoDB for backend proximity and privacy queries.
+
+**Problems and how I fixed them**
+- **Boundary edge jitter at doorways:** When walking right along the doorway boundary between the hallway and Meeting Room, rapid movements could cause zone toggling back and forth. Solved by aligning zone boundaries exactly to the door threshold line inside the doorway so the room transition feels decisive and natural.
+- **Visual tint contrast:** Bright color fills on canvas distracted from character visibility. Solved by applying subtle pastel tones (`rgba(59, 130, 246, 0.06)` for Meeting Room, `rgba(168, 85, 247, 0.06)` for Stage, etc.) with rounded corner tags in the UI corner.
+
+**What I learned**
+- How point-in-bounding-box geometric detection works in 2D space and why simple AABB (Axis-Aligned Bounding Box) checks are so fast in game loops.
+- How frontend zone transitions hook into WebRTC audio states: entering a `private` room signals to only connect with users inside the same zone.
+- Why clear UI feedback (like an on-screen zone status tag) is critical for user privacy in virtual offices, so people know when their microphone is private versus broadcast.
+
+**Tomorrow**
+- Implement `lineOfSight.js` using grid raycasting to detect whether walls block the direct sound path between two avatars, and pass `blocked: true/false` to Person 4's mixer via `onFrame`.
+
 
 
 
