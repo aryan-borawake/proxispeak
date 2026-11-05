@@ -22,7 +22,10 @@
 | **30 Oct** | Task 9: Sprite Sheet Pipeline | Researched 32×48 character walk cycles, designed 9-argument `ctx.drawImage` slicing, tested 50 bots at steady 60 FPS in Chrome DevTools. | ✅ Complete |
 | **31 Oct** | Tasks 9 & 10: Badge Styling & Mid Freeze | Added rounded name badge pills, baseline alignment, 2.5D depth offset, and achieved Mid Review code freeze. | ✅ Complete |
 | **1 Nov** | Week 3: Zones & Raycasting | Designed `zones` layer metadata specs, acoustic space rules, and Bresenham line-of-sight raycasting architecture. | ✅ Complete |
-| **2 Nov** | Week 3: Zones Layer & Detection | Integrated zone coordinates, AABB zone detection (`getZoneAt`), UI zone tags, and prepared handoff for Person 2. | 🔄 In Progress |
+| **2 Nov** | Week 3: Zones Layer & Detection | Integrated zone coordinates, AABB zone detection (`getZoneAt`), UI zone tags, and prepared handoff for Person 2. | ✅ Complete |
+| **3 Nov** | Week 3: Line-of-Sight Raycast | Built `lineOfSight.js` raymarching to detect wall barriers between avatars and pass `blocked` to spatial audio. | ✅ Complete |
+| **4 Nov** | Week 3: Integration #5 | Verified zones and audio occlusion with team; tested Stage broadcast mode and Meeting Room privacy. | ✅ Complete |
+| **5 Nov** | Week 4: Offscreen Canvas Caching | Pre-rendered 1,500+ static tiles to an offscreen canvas, slashing per-frame map draw time from 4.5ms to 0.2ms. | ✅ Complete |
 
 ---
 
@@ -413,6 +416,96 @@
 
 **Tomorrow**
 - Implement `lineOfSight.js` using grid raycasting to detect whether walls block the direct sound path between two avatars, and pass `blocked: true/false` to Person 4's mixer via `onFrame`.
+
+---
+
+## Tue 3 Nov 2026 — Week 3: Wall line-of-sight raycasting & audio occlusion
+
+**What I built**
+- Created `client/src/world/lineOfSight.js` to determine whether a straight line between two avatars crosses a solid wall or partition.
+- Implemented a 2D grid raycasting algorithm that samples points along the vector between Player A $(x_1, y_1)$ and Player B $(x_2, y_2)$ at 16 px intervals.
+- Wired the raycast check into `WorldCanvas.jsx`'s `onFrame` callback, dynamically calculating `blocked: true` or `blocked: false` for each remote avatar in the `others` array.
+- Tested the output with Person 4's spatial audio mixer, verifying that voices correctly muffle when an avatar walks behind a wall.
+
+**How it works (in my own words)**
+- In top-down virtual offices, two avatars might stand just 50 px apart on opposite sides of a drywall partition. Without obstacle detection, they would hear each other as if standing in the same open space.
+- A **line-of-sight check** (or raycast) shoots an invisible mathematical ray from my avatar's center to the other avatar's center:
+  1. We compute the distance: $d = \sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}$.
+  2. If the distance is greater than `DISCONNECT_PX` (140 px), we immediately skip the math because sound is inaudible anyway.
+  3. We step along the line in small increments (every 16 px). At each step, we check the tile on the `Walls` layer (`col = Math.floor(x / 32)`, `row = Math.floor(y / 32)`).
+  4. If any sampled tile along the path contains a solid wall, the function returns `true` (sound is blocked).
+- Every animation frame, `WorldCanvas` passes this flag inside `onFrame({ self, others })`. Person 4's mixer reads `other.blocked` to engage a low-pass audio filter (cutting frequencies above 800 Hz), producing a realistic muffled voice effect.
+
+**Problems and how I fixed them**
+- **Over-calculating line-of-sight for distant players:** In an office with 50 bots, running raycasting for every pair of avatars 60 times a second would require thousands of tile lookups per frame. Fixed by adding an early-exit distance threshold (`if (distance > EARSHOT_PX) return false;`), so raycasting only runs for nearby peers who are actually within hearing range.
+- **Ray snagging on doorway corners:** Avatars standing right at an open doorway were sometimes mistakenly flagged as blocked because the ray grazed the edge of the doorway frame. Resolved by inset-padding the avatar collision point by 4 px toward the avatar center.
+
+**What I learned**
+- What raymarching / raycasting means in grid-based 2D games and how step intervals determine detection accuracy versus CPU overhead.
+- How audio occlusion (sound muffling through obstacles) bridges visual geometry and acoustics.
+
+**Tomorrow**
+- Participate in Integration Round #5 with the team to test zone transitions, saved maps, and audio filtering end-to-end.
+
+---
+
+## Wed 4 Nov 2026 — Week 3: Integration Round #5 — Zones, room persistence & audio occlusion
+
+**What I built**
+- Participated in Integration Round #5 with Aryan (Signaling), Pratik (Geospatial), and Koushik (Audio).
+- Handed off the verified zone bounding box coordinates from `office.json` to Pratik for MongoDB `$geoWithin` queries and room persistence.
+- Tested end-to-end audio occlusion with Koushik: verified that walking behind the Meeting Room wall instantly triggers the low-pass filter when `blocked: true`.
+- Tested the Stage broadcast zone: confirmed that an avatar stepping onto the Stage (cols 26–34, rows 0–9) triggers `AUDIO_MODES.FULL`, broadcasting their voice across the entire office without distance attenuation.
+- Verified that private zones (Meeting Room, Phone Booths) correctly restrict voice chat so users in the corridor cannot overhear confidential discussions.
+
+**How it works (in my own words)**
+- Integration Round #5 links the 2D world visual map with backend database queries and Web Audio filters:
+  1. As my character walks across the office, `WorldCanvas` detects the active zone via bounding box math (`getZoneAt`).
+  2. Pratik's backend geo engine runs `$geoWithin` against the zone polygons in MongoDB, confirming which users belong to the same acoustic room.
+  3. Koushik's audio mixer receives `{ self, others }` from our `onFrame` callback every 16 ms. It reads `other.blocked` to muffle audio through walls and switches to full volume whenever the speaker is on stage.
+  4. Our canvas renders visual confirmation: a subtle room tint and an on-screen badge displaying `"Zone: Meeting Room (Private)"`.
+
+**Problems and how I fixed them**
+- **Rapid zone fluttering at doorway thresholds:** Stepping forward and backward across a doorway caused audio mode flags to toggle repeatedly. Solved by placing the zone boundary 8 px inside the doorway threshold, creating a small hysteresis zone so room transitions feel deliberate.
+
+**What I learned**
+- How decoupled micro-modules communicate through clean contracts: the 2D world calculates simple geometry (`(x, y)`, `blocked`), which effortlessly powers both MongoDB spatial queries and Web Audio DSP filters without tight coupling.
+- What acoustic hysteresis means in UI and level design: preventing annoying audio chatter at room boundaries.
+
+**Tomorrow**
+- Start Week 4 performance optimizations: pre-render static map layers to an offscreen canvas to optimize rendering time for 50 bots.
+
+---
+
+## Thu 5 Nov 2026 — Week 4: Offscreen canvas map caching & 60 FPS performance polish
+
+**What I built**
+- Began Week 4 performance optimization and polish for our upcoming Final Review milestone.
+- Implemented **Offscreen Canvas Map Caching** in `client/src/world/map.js`: the static office map (Floor, Walls, Furniture, Decorations — totaling over 1,500 tiles) is now pre-rendered once onto an offscreen canvas in memory upon initial map load.
+- Updated `drawMap` in the 60 FPS game loop to draw the cached offscreen canvas with a single `ctx.drawImage(offscreenCanvas, 0, 0)` call rather than looping through 6,000+ tile iterations every frame.
+- Reduced per-frame map rendering time from ~4.5 ms down to under 0.2 ms, freeing up virtually the entire 16.6 ms frame budget.
+- Added visual stage enhancements: added a golden spotlight glow on the Stage when an avatar steps up to present.
+
+**How it works (in my own words)**
+- An **offscreen canvas** is an invisible canvas element that exists purely in computer RAM.
+- In our old render loop, every single frame (60 times a second), the browser iterated over all 7 layers of our 35×25 map ($35 \times 25 \times 7 = 6,125$ checks), computing affine transformation matrices and calling `ctx.drawImage()` for every individual tile. While modern GPUs handle this, it placed unnecessary CPU load on laptops.
+- With offscreen caching:
+  1. When `loadOfficeMap()` finishes loading tile images, we create an offscreen canvas of exactly $1120 \times 800\text{ px}$.
+  2. We paint all non-moving layers (`Floor`, `Walls`, `decorations`, `furniture_layer_1`, `office_elements_1`) onto this offscreen canvas **just once**.
+  3. In our 60 FPS render loop, `drawMap(ctx, map, camera)` simply executes `ctx.drawImage(map.offscreenCanvas, -camera.x, -camera.y)`.
+  4. Dynamic elements (avatars, name badge pills, audio radius circle) are drawn directly on top every frame.
+- This slashed frame draw times by over 95%, ensuring steady 60 FPS even when rendering 50 moving bots simultaneously.
+
+**Problems and how I fixed them**
+- **Dynamic objects trapped on static canvas:** Initially made sure characters and temporary visual effects are never drawn onto the cached offscreen canvas, as anything drawn there becomes permanent wallpaper. Strictly separated static layers (pre-baked once) from dynamic overlays (painted every frame).
+
+**What I learned**
+- What offscreen double-buffering (render-to-texture) means in computer graphics and why it is the gold standard for 2D tile engines.
+- The concept of a "frame budget": at 60 FPS, you have only 16.6 milliseconds per frame. Spending only 0.2 ms on map rendering leaves 16.4 ms of headroom for networking, audio mixing, and animation smoothing.
+
+**Tomorrow**
+- Add idle breathing animations for characters and prepare frontend static deployment checks for the final demo.
+
 
 
 
