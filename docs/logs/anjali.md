@@ -26,6 +26,7 @@
 | **3 Nov** | Week 3: Line-of-Sight Raycast | Built `lineOfSight.js` raymarching to detect wall barriers between avatars and pass `blocked` to spatial audio. | ✅ Complete |
 | **4 Nov** | Week 3: Integration #5 | Verified zones and audio occlusion with team; tested Stage broadcast mode and Meeting Room privacy. | ✅ Complete |
 | **5 Nov** | Week 4: Offscreen Canvas Caching | Pre-rendered 1,500+ static tiles to an offscreen canvas, slashing per-frame map draw time from 4.5ms to 0.2ms. | ✅ Complete |
+| **6 Nov** | Week 4: Idle Animation & Deployment | Added sine-wave idle bobbing, stage spotlight effects, verified production build, and prepared Render deploy. | ✅ Complete |
 
 ---
 
@@ -505,6 +506,37 @@
 
 **Tomorrow**
 - Add idle breathing animations for characters and prepare frontend static deployment checks for the final demo.
+
+---
+
+## Fri 6 Nov 2026 — Week 4: Idle character animation, frontend production build & deployment readiness
+
+**What I built**
+- Implemented an idle breathing/bobbing animation cycle for stationary avatars in `WorldCanvas.jsx` using a gentle sine wave formula ($y + \sin(t \times 4) \times 1\text{ px}$), making motionless characters feel alive instead of frozen statues.
+- Built the Stage spotlight and speaker active broadcast indicator: when a character enters the Stage zone (`stage`), an animated warm spotlight cone and active speaker halo render beneath their avatar, visually signaling that their microphone is broadcasting in `AUDIO_MODES.FULL`.
+- Tested the production build pipeline (`npm run build` in `client/`) to verify that Vite bundles all assets, tilesets, and canvas scripts with zero build errors or broken asset paths.
+- Prepared the frontend deployment configuration for Render static site hosting (configuring `dist/`, build command `npm run build`, and single-page app rewrite routing).
+- Conducted pre-freeze rehearsals with the team ahead of tomorrow's **Round #6 Final Freeze** (Sat 7 Nov).
+
+**How it works (in my own words)**
+- **Idle Animation Sine Wave:** In retro top-down games, a character who completely stops moving can look like the game crashed. Instead of complex sprite swaps for idle state, we apply a subtle vertical float using a sine function:
+  $$\Delta y = \sin\left(\frac{\text{currentTime}}{300}\right) \times 1\text{ px}$$
+  This subtly shifts the avatar by $\pm 1$ pixel up and down every 1.8 seconds, simulating natural breathing and idle stance with almost zero CPU overhead.
+- **Stage Speaker Highlighting:** When `getZoneAt(x, y)` detects that an avatar is inside the Stage zone, we draw an ambient radial gradient spotlight beneath them using `ctx.createRadialGradient()`. This provides visual clarity: anyone standing on stage is visibly "on the mic".
+- **Production Build & Render Static Site:** In development, Vite serves files dynamically over `localhost:5173`. For deployment on Render, `npm run build` compiles all JSX, modules, and CSS into minified static bundles in `client/dist/`. Because we use relative public paths for maps and tiles (`/maps/office.json`, `/maps/Room_Builder_free_32x32.png`), the bundled app loads all assets without missing 404 errors.
+
+**Problems and how I fixed them**
+- **Sine wave desynchronization among multiple bots:** When 50 bots all breathe at the exact same millisecond, the canvas looks like a synchronized dance routine. Solved by giving each bot a slight random phase offset based on their unique ID (`phase = hash(bot.id)`), making each character's breathing rhythm individual and natural.
+- **Vite production asset path resolution:** In production, assets in `public/` must be referenced from the root (`/maps/...`) rather than relative source paths (`../public/...`). Verified that all `fetch()` and `new Image().src` calls use root-relative paths, ensuring seamless loading both locally and on Render.
+
+**What I learned**
+- How trigonometric sine waves ($\sin$) are used in game engines for smooth, cyclic animations (breathing, bobbing, pulsing highlights) without needing extra sprite art.
+- The difference between development server execution (Vite dev) and compiled static production deployment (Vite build / Render CDN).
+- How visual indicators (spotlights, badges) support spatial audio contracts by visually explaining audio modes (`full` vs `falloff`) to users.
+
+**Tomorrow**
+- Participate in Round #6 Final Freeze with the team, finalize deployment on Render, and review viva presentation slides.
+
 
 
 
