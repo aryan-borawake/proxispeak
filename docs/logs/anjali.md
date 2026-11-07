@@ -27,6 +27,7 @@
 | **4 Nov** | Week 3: Integration #5 | Verified zones and audio occlusion with team; tested Stage broadcast mode and Meeting Room privacy. | ✅ Complete |
 | **5 Nov** | Week 4: Offscreen Canvas Caching | Pre-rendered 1,500+ static tiles to an offscreen canvas, slashing per-frame map draw time from 4.5ms to 0.2ms. | ✅ Complete |
 | **6 Nov** | Week 4: Idle Animation & Deployment | Added sine-wave idle bobbing, stage spotlight effects, verified production build, and prepared Render deploy. | ✅ Complete |
+| **7 Nov** | Round #6: Final Freeze & Deploy | Reached final code freeze, verified Render static deployment, and ran full 50-bot rehearsal with the team. | ✅ Complete |
 
 ---
 
@@ -536,6 +537,40 @@
 
 **Tomorrow**
 - Participate in Round #6 Final Freeze with the team, finalize deployment on Render, and review viva presentation slides.
+
+---
+
+## Sat 7 Nov 2026 — Round #6: Final freeze, deployment verification & team rehearsal
+
+**What I built & verified**
+- Participated in **Integration Round #6: Final Freeze & Deployment Check** with Aryan, Pratik, and Koushik, locking down all codebase features for our upcoming Final Review.
+- Successfully built and verified the static frontend distribution bundle (`npm run build`), verifying that all tile images, maps, scripts, and CSS build cleanly into `client/dist/` without broken dependencies.
+- Verified live deployment configuration for Render static hosting with single-page app rewrite rules (`/* -> /index.html`).
+- Ran the full 50-bot load test on the production build alongside live WebRTC voice streams, confirming consistent **60 FPS** performance, zero memory leaks, and sub-1 ms canvas frame rendering thanks to our offscreen canvas caching.
+- Conducted the full final demo rehearsal: verified zone transitions (Lobby, Meeting Room, Phone Booths, Open Desks, Stage), raycasting line-of-sight sound muffling through walls, and Stage full-volume broadcast.
+- Finalized viva preparation notes and project report contributions covering Module 3's 2D canvas architecture.
+
+**How it works (in my own words)**
+- Today's milestone is the **Final Code Freeze**: no new features are added; the goal is ensuring that the entire application operates reliably, fast, and stably as one cohesive product.
+- During our full-team rehearsal, we validated the complete cross-module pipeline:
+  1. **Visuals (Person 3):** An HTML5 canvas renders the 35×25 office map in a single `drawImage` call via the offscreen cache. Avatars walk with delta-time physics ($180\text{ px/s}$), breathe via sine-wave idle bobbing, and slide smoothly along walls.
+  2. **Signaling & WebRTC (Person 1):** Socket.io broadcasts player positions at 10 Hz, while WebRTC streams peer audio directly between browsers.
+  3. **Geospatial Engine (Person 2):** MongoDB processes 250 ms proximity queries (`findNearby`) and zone containment (`$geoWithin`) with zero slowdown.
+  4. **Spatial Audio (Person 4):** Reads our `onFrame({ self, others })` callback every 16 ms to position voices stereo left/right, calculate distance gain, and apply wall muffling whenever `blocked: true`.
+- Everything works seamlessly together, running at a rock-solid 60 FPS across both local development and compiled production builds.
+
+**Problems and how I fixed them**
+- **Production base path routing:** Tested refreshing the browser directly on `?lab=world` in the production build to ensure Render redirects deep routes back to `index.html` without throwing a 404 error. Verified that client-side search query params (`window.location.search`) parse properly on cold loads.
+- **Audio ring visibility in final demo mode:** Ensured the debug audio earshot circle (`EARSHOT_PX = 100`) can be cleanly toggled on and off via the debug prop without cluttering the screen during final presentation recordings.
+
+**What I learned**
+- What a formal "Final Freeze" achieves: by locking the codebase, the team eliminates regression risks and focuses 100% on performance validation, deployment, and viva readiness.
+- How the four modules (Signaling, Geo, World, Audio) achieve synergy through contract-first engineering: each person developed in complete isolation using fakes, yet everything clicked together into a unified Gather-like virtual office.
+- How to structure and present a technical walkthrough of 2D game loops, delta-time physics, raymarching, and canvas caching for oral examination.
+
+**Tomorrow**
+- Prepare viva demonstration walkthrough and review final presentation slides for the Final Review.
+
 
 
 
