@@ -28,6 +28,8 @@
 | **5 Nov** | Week 4: Offscreen Canvas Caching | Pre-rendered 1,500+ static tiles to an offscreen canvas, slashing per-frame map draw time from 4.5ms to 0.2ms. | ✅ Complete |
 | **6 Nov** | Week 4: Idle Animation & Deployment | Added sine-wave idle bobbing, stage spotlight effects, verified production build, and prepared Render deploy. | ✅ Complete |
 | **7 Nov** | Round #6: Final Freeze & Deploy | Reached final code freeze, verified Render static deployment, and ran full 50-bot rehearsal with the team. | ✅ Complete |
+| **8 Nov** | Final Report & Slides | Authored Module 3 project report chapter, 3 presentation slides, and demo video walkthrough. | ✅ Complete |
+| **9 Nov** | Final Review & Live Defense | Successfully delivered live 50-bot demonstration at 60 FPS and defended architectural choices in oral viva. | 🏆 Milestone Complete |
 
 ---
 
@@ -570,6 +572,68 @@
 
 **Tomorrow**
 - Prepare viva demonstration walkthrough and review final presentation slides for the Final Review.
+
+---
+
+## Sun 8 Nov 2026 — Final Review Preparation: Project report chapter, presentation slides & demo video
+
+**What I built & prepared**
+- Authored Module 3's complete chapter for the final team project report, documenting the 2D HTML5 canvas rendering pipeline, Tiled integration, framerate-independent physics, and spatial audio interface.
+- Created 3 visual presentation slides for our final project evaluation covering:
+  1. **2D World Architecture:** 7-layer Tiled level design, coordinate systems, and contract integration.
+  2. **Movement & Physics:** Framerate-independent delta-time speed ($180\text{ px/s}$), delta clamping, and diagonal wall sliding.
+  3. **Performance Engineering:** Offscreen canvas double-buffering (< 0.2 ms draw time) and raycast line-of-sight sound occlusion.
+- Recorded a 60-second high-framerate demonstration video of the virtual office featuring 50 autonomous wandering bots, room zone transitions, and audio radius debugging for the team presentation.
+- Rehearsed viva defense questions covering `requestAnimationFrame`, `useRef` vs. `useState`, bitwise tile matrix transformations, and raymarching.
+
+**How it works (in my own words)**
+- The final project report is divided into individual module chapters so each student documents their own engineering work. For Module 3, the report details how HTML5 Canvas delivers a responsive, 60 FPS Gather-like virtual space without requiring heavy 3D game engines or WebGL dependencies.
+- During presentation rehearsals, I focused on clearly explaining *why* before *how*:
+  - *Why delta time?* So players on 144 Hz gaming monitors don't run 2.4× faster than colleagues on 60 Hz laptops.
+  - *Why an offscreen canvas?* Pre-rendering 1,500+ static tiles to memory once slashes draw time by 95%, guaranteeing that 50 moving bots never drop frames.
+  - *Why raymarching for audio?* A straight-line geometric check through the `Walls` layer enables Person 4's mixer to muffle voices through walls realistically.
+
+**Problems and how I fixed them**
+- **Screen recording video compression blur:** Standard screen recorders blurred the retro 32×32 pixel art. Re-recorded using crisp lossless capture settings so tile details and pixel art remain sharp for the presentation slides.
+
+**What I learned**
+- How to distill complex technical implementations into clear, high-impact presentation slides.
+- The importance of viva practice: being able to explain core engineering trade-offs in plain English before an oral examination panel.
+
+**Tomorrow**
+- Deliver the live final evaluation demonstration with the team and defend Module 3's architecture in the oral viva.
+
+---
+
+## Mon 9 Nov 2026 — Final Review Milestone: Live evaluation, 50-bot demonstration & viva defense
+
+**What I built & demonstrated**
+- Participated in our **Final Review** evaluation session with project examiners and the team.
+- Successfully delivered the live interactive demonstration of Module 3:
+  1. Smooth 8-directional avatar movement with normalized diagonal velocity ($\times 0.7071$) and `window.blur` key-sticking protection.
+  2. Tile-based collision detection and diagonal sliding along Meeting Room and Booth walls.
+  3. Multi-user stress test showcasing 50 autonomous wandering bots with zero wall penetration or lag.
+  4. Zone detection with dynamic UI status updates and spatial sound occlusion via raycasting (`lineOfSight.js`).
+- Monitored real-time performance metrics in Chrome DevTools during the live review, maintaining an uninterrupted **59–60 FPS** and sub-1 ms canvas frame execution.
+- Defended Module 3's engineering decisions in the viva oral examination, answering panel questions on delta time, React lifecycle integration, and canvas caching.
+
+**How it works (in my own words)**
+- During the final evaluation, we walked the examiners through the complete user journey:
+  - Entering the Lobby spawn point and navigating through the 6 distinct office zones.
+  - Demonstrating how the visual 2D world coordinates `{ self, others }` synchronize directly with Person 4's spatial audio mixer and Person 2's MongoDB geo-queries.
+  - Proving that the frontend can run completely standalone with `createFakeNet` or connect seamlessly to the live Socket.io backend.
+- The examiners were impressed by the offscreen canvas optimization, which kept the frame budget under 1 ms even with 50 active avatars rendering simultaneously.
+
+**Problems and how I fixed them**
+- **Examiner inquiry on tab throttling:** Answered examiner questions on background tab behavior by explaining how `requestAnimationFrame` automatically suspends to conserve battery, and how `MAX_DELTA_SEC = 0.05` prevents avatars from teleporting across the map upon returning.
+
+**What I learned**
+- The value of contract-first development: because we built against frozen specs in `CONTRACTS.md` from Day 1, the final integrated system ran flawlessly under live examiner scrutiny without integration bugs.
+- Confidence in explaining 2D game loops, matrix math, and spatial audio interfaces in an oral exam setting.
+
+**Tomorrow**
+- Complete post-review documentation wrap-up and finalize the repository archive.
+
 
 
 
