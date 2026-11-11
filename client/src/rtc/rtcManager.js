@@ -30,29 +30,60 @@ let iceServersLogged = false;
  * all three: the address, a user name and a password ("credential"). If any one is missing we
  * leave TURN out, because a half-set TURN entry would only fail.
  *
+ * VITE_TURN_URL may hold SEVERAL addresses separated by commas. A TURN provider such as Metered
+ * gives the same relay on different ports and transports (UDP on 80, TCP on 80, 443, TLS on 443),
+ * because some networks block all but one of them. They share one user name and password, so
+ * they go into ONE entry as a list of urls, and the browser tries each one.
+ *
  * Example: nothing set           → [{ urls: 'stun:stun.l.google.com:19302' }]
- *          all three VITE_TURN_* → [STUN, { urls: 'turn:…:3478', username: '…', credential: '…' }]
+ *          all three VITE_TURN_*, VITE_TURN_URL = 'turn:relay.example:80, turns:relay.example:443?transport=tcp'
+ *                                 → [STUN, { urls: ['turn:relay.example:80', 'turns:relay.example:443?transport=tcp'],
+ *                                            username: '…', credential: '…' }]
  */
 function buildIceServers() {
   const iceServers = [STUN_SERVER];
 
-  const turnUrl = import.meta.env.VITE_TURN_URL;
+  const turnUrls = splitTurnUrls(import.meta.env.VITE_TURN_URL);
   const turnUsername = import.meta.env.VITE_TURN_USERNAME;
   const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL;
-  const turnIsComplete = Boolean(turnUrl && turnUsername && turnCredential);
+  const turnIsComplete = Boolean(turnUrls.length > 0 && turnUsername && turnCredential);
 
   if (turnIsComplete) {
-    iceServers.push({ urls: turnUrl, username: turnUsername, credential: turnCredential });
+    iceServers.push({ urls: turnUrls, username: turnUsername, credential: turnCredential });
   }
 
   if (!iceServersLogged) {
     iceServersLogged = true;
     // Only the addresses: the TURN password must never appear in the console.
-    const addresses = iceServers.map((server) => server.urls).join(', ');
+    // .flat() turns [stunUrl, [turnUrl1, turnUrl2]] into [stunUrl, turnUrl1, turnUrl2].
+    const addresses = iceServers.map((server) => server.urls).flat().join(', ');
     const turnNote = turnIsComplete ? '' : ' (no TURN: VITE_TURN_URL, VITE_TURN_USERNAME and VITE_TURN_CREDENTIAL are not all set)';
     console.log(`[rtc] ICE servers: ${addresses}${turnNote}`);
   }
   return iceServers;
+}
+
+/**
+ * Split the VITE_TURN_URL setting into a list of addresses.
+ * Spaces around each address are removed, and empty pieces (e.g. from a trailing comma) dropped.
+ * Example: 'turn:a:80, turn:a:443?transport=tcp,' → ['turn:a:80', 'turn:a:443?transport=tcp']
+ *          undefined (not set)                    → []
+ *
+ * @param {string | undefined} setting
+ * @returns {string[]}
+ */
+function splitTurnUrls(setting) {
+  if (!setting) {
+    return [];
+  }
+  const urls = [];
+  for (const piece of setting.split(',')) {
+    const url = piece.trim();
+    if (url !== '') {
+      urls.push(url);
+    }
+  }
+  return urls;
 }
 
 /**

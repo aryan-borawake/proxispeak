@@ -1,0 +1,56 @@
+# render.yaml — Person 1
+# A Render "Blueprint": it tells Render which services to create from this repo, and how to
+# build and start each one. Step-by-step guide: docs/deploy.md.
+#
+# Two services:
+#   proxispeak-server  the Node server (Express + Socket.io), a free web service
+#   proxispeak-client  the built React app, a static site (plain files, no server code)
+#
+# `sync: false` means "this value is secret or not known yet: ask for it in the Render
+# dashboard, never store it in this file". Real values never go in here.
+
+services:
+  - type: web
+    name: proxispeak-server
+    runtime: node
+    plan: free
+    branch: aryan
+    buildCommand: cd server && npm ci
+    startCommand: cd server && npm start
+    healthCheckPath: /api/health
+    envVars:
+      # The Node version we use locally (node --version). Vite 8 needs 20.19 or newer.
+      - key: NODE_VERSION
+        value: 24.15.0
+      # The Atlas connection string, ending in /proxispeak (docs/deploy.md, step 1).
+      - key: MONGODB_URI
+        sync: false
+      # The client's address, e.g. https://proxispeak-client.onrender.com (no "/" at the end).
+      - key: CLIENT_ORIGIN
+        sync: false
+
+  # A static site is written as type "web" with runtime "static" in a Blueprint.
+  - type: web
+    name: proxispeak-client
+    runtime: static
+    branch: aryan
+    buildCommand: cd client && npm ci && npm run build
+    staticPublishPath: client/dist
+    # The app has one page. Any address (/, /anything) gets index.html; the app reads ?lab= itself.
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: 24.15.0
+      # The server's address, e.g. https://proxispeak-server.onrender.com. Baked in at build time.
+      - key: VITE_SERVER_URL
+        sync: false
+      # Metered TURN addresses, separated by commas (docs/deploy.md, step 2).
+      - key: VITE_TURN_URL
+        sync: false
+      - key: VITE_TURN_USERNAME
+        sync: false
+      - key: VITE_TURN_CREDENTIAL
+        sync: false

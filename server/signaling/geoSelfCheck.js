@@ -26,7 +26,7 @@ const PROBE_B = { id: '__probe2__', x: 20, y: 20 };
 
 /**
  * Run the self-check. Resolves if the engine works; rejects with an Error that says why if not.
- * It does not set a time limit itself; server/index.js wraps it in a 3-second timeout.
+ * It does not set a time limit itself; server/index.js wraps it in a 5-second timeout.
  *
  * @param {(options: { roomId: string }) => object} createGeoEngine - Person 2's function
  * @returns {Promise<void>}

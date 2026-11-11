@@ -1,10 +1,15 @@
 // client/src/App.jsx — Person 1
 // The page that plugs the four modules together.
-// Weeks 1–2: it only shows a lab switch, so each person can open their own test page.
-// ?lab=office (OfficeLab.jsx) already connects all four modules: net → rtc → mixer → world
-// (see CONTRACTS.md, "How App.jsx connects them"). In Week 3 that wiring becomes the main page.
+//
+// The address decides what you see:
+//   /                 → the full app (OfficeLab.jsx: net → rtc → mixer → world, see CONTRACTS.md
+//                       section 8). This is what visitors of the deployed site get.
+//   /?lab=world       → Person 3's world test page
+//   /?lab=audio       → Person 4's audio test page
+//   /?lab=rtc         → Person 1's signaling and WebRTC test page
+//   /?lab=office      → the full app again (the old address still works)
+//   /?lab=<anything else> → the list of test pages
 
-import { EVENTS } from '@shared/events.js';
 import { RtcLab } from './rtc/index.js';
 import { WorldLab } from './world/index.js';
 import { AudioLab } from './audio/index.js';
@@ -19,25 +24,26 @@ const LABS = {
 };
 
 export function App() {
+  // URLSearchParams reads the part of the address after "?". .get('lab') is null when there is none.
   const labName = new URLSearchParams(window.location.search).get('lab');
-  const Lab = LABS[labName];
+
+  // No ?lab at all: the full app.
+  // Example: https://proxispeak-client.onrender.com/ → labName is null → OfficeLab.
+  const Page = labName === null ? OfficeLab : LABS[labName];
 
   return (
     <main style={{ fontFamily: 'system-ui, sans-serif', padding: 16 }}>
       <h1>ProxiSpeak</h1>
-      <p>Skeleton running</p>
-      <p>Events loaded from @shared/events.js: {Object.keys(EVENTS).length}</p>
 
       <nav style={{ display: 'flex', gap: 16 }}>
+        <a href="/">Office</a>
         <a href="?lab=world">World lab</a>
         <a href="?lab=audio">Audio lab</a>
         <a href="?lab=rtc">RTC lab</a>
-        <a href="?lab=office">Office (all modules)</a>
-        <a href="/">Home</a>
       </nav>
 
       <hr />
-      {Lab ? <Lab /> : <p>Pick a lab above.</p>}
+      {Page ? <Page /> : <p>There is no lab called "{labName}". Pick one above.</p>}
     </main>
   );
 }

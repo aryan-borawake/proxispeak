@@ -46,7 +46,7 @@ cd client && npm install && cd ..
 npm run dev:server
 ```
 
-You should see `[server] listening on 3001`. Check it at http://localhost:3001/api/health, which shows `{"ok":true}`.
+You should see `[server] listening on 3001`. Check it at http://localhost:3001/api/health, which shows something like `{"ok":true,"engine":"geo","uptimeS":5}` (`engine` is `fakeNearby` if MongoDB isn't running).
 
 **4. Start the web page** (terminal 2):
 
@@ -54,11 +54,24 @@ You should see `[server] listening on 3001`. Check it at http://localhost:3001/a
 npm run dev:client
 ```
 
-Open http://localhost:5173. Test pages for each module:
+Open http://localhost:5173 to get the office (all four modules together). Test pages for each module:
 
 - http://localhost:5173/?lab=world: 2D world (Person 3)
 - http://localhost:5173/?lab=audio: spatial audio (Person 4)
 - http://localhost:5173/?lab=rtc: signaling and WebRTC (Person 1)
+
+---
+
+## Live demo / deploy
+
+ProxiSpeak runs for free on [Render](https://render.com) (client = static site, server = web service), with [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) as the database and [Metered](https://www.metered.ca/stun-turn) as the TURN voice relay. Both Render services are described in [`render.yaml`](render.yaml) (a Render Blueprint, branch `aryan`).
+
+- Live demo: `https://proxispeak-client.onrender.com` *(fill in the real address after the first deploy)*
+- Server health: `https://proxispeak-server.onrender.com/api/health` shows `{"ok":true,"engine":"geo",...}`
+
+The free server sleeps after 15 minutes without visitors and takes about a minute to wake up, so open the health address a minute before a demo.
+
+Step-by-step guide, which setting goes where, and troubleshooting: [docs/deploy.md](docs/deploy.md).
 
 ---
 

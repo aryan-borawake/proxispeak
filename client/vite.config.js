@@ -23,6 +23,9 @@ export default defineConfig({
   // Where Vite looks for .env files. By default it looks in client/, but our one .env file lives
   // in the repo root (one level up). Only variables whose names start with VITE_ (e.g.
   // VITE_SERVER_URL) reach the browser code, so server secrets like MONGODB_URI never do.
+  // On Render there is no .env file: Vite then takes VITE_ variables from the real environment
+  // (Render's dashboard) instead. They are baked into the built files by `npm run build`, so
+  // after changing one on Render the client must be built (deployed) again.
   envDir: path.resolve(clientDir, '..'),
   server: {
     port: 5173,

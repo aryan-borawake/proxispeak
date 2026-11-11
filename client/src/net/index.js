@@ -8,8 +8,9 @@ import { io } from 'socket.io-client';
 import { EVENTS } from '@shared/events.js';
 
 // Where the server lives. In development it's our Node server on port 3001.
-// When we deploy, VITE_SERVER_URL can point somewhere else without changing code.
-// (Vite only passes env variables that start with VITE_ to the browser.)
+// When we deploy, VITE_SERVER_URL points at the Render server, e.g. https://proxispeak-server.onrender.com
+// (docs/deploy.md). Vite only passes env variables that start with VITE_ to the browser, and it
+// bakes the value into the built files, so changing it means building the client again.
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
 
 // How long connect() (and an automatic re-join) waits for the server's reply before giving up.
