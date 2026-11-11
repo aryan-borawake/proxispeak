@@ -6,3 +6,7 @@ dist/
 fix-*.patch
 
 .antigravity/
+
+docs/reference/
+
+docs/reference/
