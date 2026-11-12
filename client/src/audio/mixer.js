@@ -5,7 +5,17 @@
  *   MediaStream -> MediaStreamSourceNode -> GainNode -> StereoPannerNode -> Destination
  */
 
+import { AUDIO_FADE_MS, AUDIO_MODES, TILE_SIZE, WALL_MUFFLE_GAIN } from '@shared/constants.js';
 import { distanceToGain, dxToPan } from './formulas.js';
+
+// v6: how loud a voice is in 'full' mode (same private room, the stage): constant, and the same level
+// as talking face to face on open floor, one tile apart (distanceToGain(32) ≈ 0.77).
+const FULL_MODE_GAIN = distanceToGain(TILE_SIZE);
+
+// Normal smoothing while people walk (50 ms), and a slower fade (AUDIO_FADE_MS, 300 ms) whenever a
+// voice changes mode or a wall comes between: setTargetAtTime gets ~95 % of the way in 3 time constants.
+const TIME_CONSTANT = 0.05;
+const FADE_TIME_CONSTANT = AUDIO_FADE_MS / 1000 / 3;
 
 export function createMixer() {
   let audioCtx = null;
@@ -89,9 +99,11 @@ export function createMixer() {
         sourceNode,
         gainNode,
         pannerNode,
-        mode: 'falloff', // 'falloff' (default) or 'full' (private rooms)
+        mode: AUDIO_MODES.FALLOFF, // 'falloff' (default) or 'full' (private rooms, the stage)
         lastGain: 0,
         lastPan: 0,
+        blocked: false, // v6: a wall between us (open floor)
+        fadeUntil: ctx.currentTime + AUDIO_FADE_MS / 1000, // v6: slow fade until then (a new voice, a mode or wall change)
       });
     },
 
@@ -128,8 +140,10 @@ export function createMixer() {
      */
     setMode: (id, mode) => {
       const peer = peers.get(id);
-      if (peer) {
+      if (peer && peer.mode !== mode) {
         peer.mode = mode;
+        // v6: a new mode fades in over AUDIO_FADE_MS instead of jumping.
+        if (audioCtx) peer.fadeUntil = audioCtx.currentTime + AUDIO_FADE_MS / 1000;
       }
     },
 
@@ -146,8 +160,6 @@ export function createMixer() {
 
       const { self, others } = frame;
       const now = audioCtx.currentTime;
-      // Smooth interpolation constant (50ms) to avoid pops/clicks
-      const TIME_CONSTANT = 0.05;
 
       const otherMap = new Map();
       if (Array.isArray(others)) {
@@ -170,21 +182,29 @@ export function createMixer() {
         const distance = Math.hypot(dx, dy);
 
         let targetGain = 0;
-        if (peer.mode === 'full') {
-          targetGain = 1.0;
+        if (peer.mode === AUDIO_MODES.FULL) {
+          // v6: same room / stage: a constant comfortable volume, no distance falloff.
+          targetGain = FULL_MODE_GAIN;
         } else {
           targetGain = distanceToGain(distance);
         }
 
-        // If line of sight is blocked by a wall, apply attenuation
-        if (other.blocked) {
-          targetGain *= 0.3; // Muffled by wall
+        // v6: a wall between us on open floor muffles the voice to WALL_MUFFLE_GAIN (about 30 %).
+        // The world only sets `blocked` on open floor, so room voices are never muffled.
+        const blocked = other.blocked === true && peer.mode !== AUDIO_MODES.FULL;
+        if (blocked !== peer.blocked) {
+          peer.blocked = blocked;
+          peer.fadeUntil = now + AUDIO_FADE_MS / 1000;
+        }
+        if (blocked) {
+          targetGain *= WALL_MUFFLE_GAIN;
         }
 
         const targetPan = dxToPan(dx);
+        const timeConstant = now < peer.fadeUntil ? FADE_TIME_CONSTANT : TIME_CONSTANT;
 
         // Apply smoothly using setTargetAtTime
-        peer.gainNode.gain.setTargetAtTime(targetGain, now, TIME_CONSTANT);
+        peer.gainNode.gain.setTargetAtTime(targetGain, now, timeConstant);
         peer.lastGain = targetGain;
 
         if (peer.pannerNode) {
@@ -205,6 +225,7 @@ export function createMixer() {
           mode: peer.mode,
           gain: peer.lastGain,
           pan: peer.lastPan,
+          blocked: peer.blocked, // v6: muffled by a wall
         });
       }
       return diagnostics;

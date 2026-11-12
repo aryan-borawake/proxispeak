@@ -13,6 +13,7 @@
 // All the notes travel through our server (net.sendSignal / net.onSignal). The voice does not.
 
 import { EVENTS } from '@shared/events.js';
+import { AUDIO_MAX_BITRATE_BPS } from '@shared/constants.js';
 
 // STUN: a free Google helper server that tells the browser its public internet address,
 // so it can hand that address to the other browser as a candidate.
@@ -20,6 +21,34 @@ const STUN_SERVER = { urls: 'stun:stun.l.google.com:19302' };
 
 // Has buildIceServers already logged its list? We log it once per page, not once per manager.
 let iceServersLogged = false;
+
+// v6: has limitAudioBitrate logged the limit yet? Once per page too.
+let bitrateLogged = false;
+
+/**
+ * v6 (mesh scaling): cap what my microphone sends on ONE connection at AUDIO_MAX_BITRATE_BPS (32 kbps).
+ * In a mesh every connection carries its own copy of my voice, so with 8 peers I upload 8 copies:
+ * 8 × 32 kbps = 256 kbps, fine for home internet. Opus (the WebRTC voice codec) sounds clear at 32 kbps.
+ * RTCRtpSender.setParameters changes it on a live connection; the encodings list only exists once the
+ * connection has been negotiated, so we call this when the connection is 'connected'.
+ */
+async function limitAudioBitrate(pc) {
+  for (const sender of pc.getSenders()) {
+    if (sender.track?.kind !== 'audio') continue;
+    try {
+      const parameters = sender.getParameters();
+      if (!parameters.encodings || parameters.encodings.length === 0) parameters.encodings = [{}];
+      parameters.encodings[0].maxBitrate = AUDIO_MAX_BITRATE_BPS;
+      await sender.setParameters(parameters);
+      if (!bitrateLogged) {
+        bitrateLogged = true;
+        console.log(`[rtc] audio send limit: ${AUDIO_MAX_BITRATE_BPS / 1000} kbps per connection (RTCRtpSender.setParameters)`);
+      }
+    } catch (error) {
+      console.warn('[rtc] could not limit the audio bitrate (the voice still works):', error);
+    }
+  }
+}
 
 /**
  * The ICE servers every connection uses: Google's STUN, plus our TURN relay if one is configured.
@@ -163,6 +192,9 @@ export function createRtcManager({ net, selfId, micStream, onRemoteStream, onPee
     // 'new' → 'connecting' → 'connected' is the happy path. 'failed' means no address worked.
     pc.onconnectionstatechange = () => {
       console.log(`[rtc] connection to ${id}: ${pc.connectionState}`);
+      if (pc.connectionState === 'connected') {
+        limitAudioBitrate(pc); // v6: 32 kbps per connection (not awaited: it catches its own errors)
+      }
       if (pc.connectionState === 'failed') {
         // No automatic retry: close it so the page doesn't keep a dead connection.
         // Walking out of earshot and back in makes a fresh one.
