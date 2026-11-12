@@ -7,9 +7,19 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const LAYOUT_PATH = fileURLToPath(new URL('./layout.json', import.meta.url));
+const MAP_PATH = fileURLToPath(new URL('../../client/public/maps/office.json', import.meta.url));
 
 /** The floor plan. Read once when the server starts. */
 export const layout = JSON.parse(readFileSync(LAYOUT_PATH, 'utf8'));
+
+// v6: the generated Tiled map that goes with it (stored in the `rooms` collection at start-up).
+let officeMapCache = null;
+
+/** The generated office map (client/public/maps/office.json), read the first time it is needed. */
+export function officeMap() {
+  if (!officeMapCache) officeMapCache = JSON.parse(readFileSync(MAP_PATH, 'utf8'));
+  return officeMapCache;
+}
 
 const desksById = new Map([...layout.desks, ...layout.hotDesks].map((desk) => [desk.id, desk]));
 

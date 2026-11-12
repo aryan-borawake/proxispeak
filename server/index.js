@@ -14,11 +14,16 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { attachSignaling } from './signaling/index.js';
 import { runGeoSelfCheck } from './signaling/geoSelfCheck.js';
-import { connectDb, createGeoEngine, Position } from './geo/index.js';
+import { connectDb, createGeoEngine, createRoomsRouter, ensureGeneratedRoom, loadAreas, Position, saveAreas } from './geo/index.js';
+import { EVENTS } from '../shared/events.js';
+import { requireAdmin } from './auth/middleware.js';
 import { DEFAULT_ROOM } from '../shared/constants.js';
 import { createAuthRouter } from './auth/routes.js';
 import { createOfficeRouter } from './office/routes.js';
-import { loadOffice } from './office/store.js';
+import { getFloor, listFloors, loadOffice } from './office/store.js';
+import { layout, officeMap } from './office/layout.js';
+import { setRoomAreas } from './signaling/roomAreas.js';
+import { getLastTickStats, recheckRoom } from './signaling/tick.js';
 
 // Load settings from the .env file in the repo root (one level above server/), IF it exists.
 // On a laptop the file is there. On Render it is not (it is git-ignored, so it never reaches
@@ -96,17 +101,20 @@ function readAllowedOrigins(setting) {
 // Express app: normal web addresses.
 const app = express();
 app.use(cors({ origin: ALLOWED_ORIGINS })); // only our own web pages may call us from a browser
-app.use(express.json());
+// JSON bodies (100 KB at most), except the layout upload, which reads up to 5 MB itself (geo/routes.js).
+const readJson = express.json();
+const isLayoutUpload = (req) => req.method === 'POST' && req.path.startsWith('/api/rooms/') && req.path.endsWith('/layout');
+app.use((req, res, next) => (isLayoutUpload(req) ? next() : readJson(req, res, next)));
 
 // Health check. Render calls it (healthCheckPath in render.yaml) to know the server is up.
 // Example answer: { ok: true, engine: 'geo', uptimeS: 42 }
 //   engine:  'geo' (MongoDB) or 'fakeNearby' (in memory, because MongoDB was not available)
 //   uptimeS: how many seconds this server has been running
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, engine: engineName, uptimeS: Math.round(process.uptime()) });
+  // v6: tick = the last 5-second window of proximity-tick timing (load test), or null.
+  res.json({ ok: true, engine: engineName, uptimeS: Math.round(process.uptime()), tick: getLastTickStats() });
 });
 
-// TODO (Week 4): mount rooms routes (Person 2 writes them in server/geo/; Person 1 mounts them here).
 
 // v5: the sign-in routes (/api/auth/…, /api/me). The office and admin routes are mounted further
 // down, once signaling is attached (the admin page asks signaling who is online).
@@ -231,9 +239,56 @@ const geo = await startGeoEngine();
 // startGeoEngine connected it, otherwise the demo directory in memory (office/store.js).
 await loadOffice();
 
+// v6, room persistence: every floor has a stored layout in the `rooms` collection (map, desks, areas,
+// version). At start-up the generated layout is stored (a new version when it changed; an uploaded one
+// is kept). Its areas are then stored in the `areas` collection and read back from it, so the tick's
+// $geoWithin questions use the stored shapes. Without MongoDB all of this lives in memory.
+async function ensureRoomFor(floorId, options) {
+  return ensureGeneratedRoom({
+    floorId,
+    name: getFloor(floorId)?.name || floorId,
+    map: officeMap(),
+    desks: layout.desks,
+    areas: layout.areas || [],
+    mapHash: layout.mapHash || '',
+  }, options);
+}
+async function applyRoomAreas(floorId, areas) {
+  setRoomAreas(floorId, areas);
+  if (!geo) return areas.length;
+  const saved = await saveAreas(floorId, areas);
+  setRoomAreas(floorId, await loadAreas(floorId));
+  return saved;
+}
+for (const floor of listFloors()) {
+  const room = await ensureRoomFor(floor._id);
+  const saved = await applyRoomAreas(floor._id, room.areas);
+  console.log(`[server] ${floor._id}: layout version ${room.version} (${room.source}), ${saved} areas${geo ? ' stored in MongoDB' : ' (in memory)'}`);
+}
+
 // createGeoEngine is passed too, so every floor (its own room) can get its own geo engine.
 const signaling = attachSignaling(io, { geo, createGeoEngine: geo ? createGeoEngine : null });
 app.use(createOfficeRouter({ getOnlineEmployeeIds: signaling.getOnlineEmployeeIds }));
+
+// v6: GET /api/rooms/:id (a floor's stored layout), GET /api/rooms and POST /api/rooms/:id/layout (admin).
+// After an upload: the floor's areas are replaced, everyone on it is re-checked by the next tick, and
+// their browsers get EVENTS.LAYOUT_UPDATE (they load the new map).
+app.use(
+  createRoomsRouter({
+    requireAdmin,
+    isFloor: (id) => Boolean(getFloor(id)),
+    ensureRoom: ensureRoomFor,
+    onLayoutSaved: async (room) => {
+      try {
+        await applyRoomAreas(room.floorId, room.areas);
+        recheckRoom(room.floorId);
+        io.to(room.floorId).emit(EVENTS.LAYOUT_UPDATE, { floorId: room.floorId, version: room.version });
+      } catch (error) {
+        console.error(`[server] could not apply the new layout of ${room.floorId}:`, error);
+      }
+    },
+  }),
+);
 
 // Log who may connect, so a CORS problem on Render is easy to spot in the logs.
 console.log(`[server] allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);

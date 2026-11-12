@@ -14,6 +14,7 @@ import { layout, wingAt } from '../office/layout.js';
 import { floorSnapshot, getDepartment, getEmployee, getFloor, isWingClosed, officeEvents, profileOf } from '../office/store.js';
 import { getPlayer, listPlayers, listPlayersInRoom } from './players.js';
 import { disconnectAllPeers } from './tick.js';
+import { allowFreeMove } from './moveCheck.js';
 
 // New players face down (towards the screen) when they appear.
 const SPAWN_DIR = 'down';
@@ -142,6 +143,7 @@ export function movePlayerToFloor(io, socket, floorId, geoFor) {
   player.y = spawn.y;
   player.dir = SPAWN_DIR;
   player.moved = true; // the next tick checks who is near the elevator
+  allowFreeMove(player); // v6: a new floor starts a fresh movement budget
   const employee = getEmployee(player.employeeId);
   if (employee) Object.assign(player, employeeFields(employee));
 

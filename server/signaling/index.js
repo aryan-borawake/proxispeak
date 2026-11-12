@@ -10,6 +10,8 @@
 // v5 (the Infotact office, officeRooms.js): joining with a sign-in token, one room per floor,
 // EVENTS.PLAYER_STATUS (Do Not Disturb leaves you out of every peer set), EVENTS.FLOOR_CHANGE
 // (the elevator), EVENTS.OFFICE_UPDATE, and refusing moves into closed wings.
+// v6: the room rules in the tick (tick.js + server/geo/canHear.js), area chat (areaChat.js), and the
+// move speed check (moveCheck.js).
 
 import { EVENTS } from '../../shared/events.js';
 import {
@@ -24,6 +26,8 @@ import {
 import { getFloor } from '../office/store.js';
 import { addPlayer, removePlayer, getPlayer, listPlayers, updatePlayerPosition } from './players.js';
 import { startProximityTick, removeFromPeers, arePeers, disconnectAllPeers } from './tick.js';
+import { handleChat } from './areaChat.js';
+import { allowFreeMove, checkMoveSpeed } from './moveCheck.js';
 import {
   buildWorldInit,
   getOnlineEmployeeIds,
@@ -78,6 +82,11 @@ export function attachSignaling(io, { geo, createGeoEngine = null }) {
 
     socket.on(EVENTS.SIGNAL, (payload) => {
       handleSignal(io, socket, payload);
+    });
+
+    // v6: area chat (areaChat.js): only the people standing in the same room get it.
+    socket.on(EVENTS.CHAT_SEND, (payload) => {
+      handleChat(io, socket, payload, sendError);
     });
 
     // `reason` is Socket.io's explanation, e.g. 'transport close' (tab closed, wifi lost,
@@ -160,6 +169,7 @@ function handleJoin(socket, payload) {
   // 3. Add the player at the spawn point. (buildWorldInit lists the others in the room, without me,
   //    and copies only the contract's fields, so server-only fields like `moved` never leave the server.)
   const player = addPlayer({ id: socket.id, ...fields });
+  allowFreeMove(player); // v6: the first move after joining may put me anywhere (a reconnect)
 
   // 4. Put this socket in its room (a floor, or DEFAULT_ROOM), so room-wide messages reach it.
   socket.join(roomId);
@@ -251,8 +261,15 @@ function handleMove(socket, payload) {
     return;
   }
 
-  // 4. Store only x, y and dir (players.js copies them one by one).
-  updatePlayerPosition(socket.id, { x: payload.x, y: payload.y, dir: payload.dir });
+  // 4. v6: the speed check (moveCheck.js). A move longer than the player's movement budget is
+  //    shortened, never refused, so a slow network can't get anyone stuck.
+  const allowed = checkMoveSpeed(getPlayer(socket.id), payload.x, payload.y);
+  if (allowed.shortened) {
+    console.warn(`[signaling] move from ${socket.id} was faster than RUN_SPEED_PX_PER_SEC: shortened`);
+  }
+
+  // 5. Store only x, y and dir (players.js copies them one by one).
+  updatePlayerPosition(socket.id, { x: allowed.x, y: allowed.y, dir: payload.dir });
 }
 
 /**
