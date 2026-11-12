@@ -33,7 +33,8 @@ export const EVENTS = Object.freeze({
 
   // server → one browser, when its nearby people change (checked every PROXIMITY_TICK_MS, 250 ms).
   // Payload: { entered: [{ id, mode }], left: [id], changed: [{ id, mode }] }
-  // In Weeks 1–2, mode is always 'falloff' and changed is always empty.
+  // mode = how I hear that person (AUDIO_MODES): 'full' in the same room / from the stage, else 'falloff'.
+  // changed = people I stay connected to whose mode changed (e.g. we both walked into a meeting room).
   PEERS_UPDATE: 'peers:update',
 
   // browser → server → browser, during WebRTC handshakes.
@@ -63,4 +64,18 @@ export const EVENTS = Object.freeze({
   // server → one browser: "you are now on this floor". Sent after FLOOR_CHANGE, and also when the
   // admin moves your department to another floor. Same payload as WORLD_INIT (a new world).
   FLOOR_CHANGED: 'floor:changed',
+
+  // ---- v6: rooms that work ----
+
+  // browser → server: "post this in the chat of the area I'm standing in".   Payload: { text }
+  // Only inside a private, silent or stage area; the server works out the area itself.
+  CHAT_SEND: 'chat:send',
+
+  // server → everyone standing in that area (the sender too).
+  // Payload: { areaId, areaName, from: { id, name }, text, t }   (t = server time in ms)
+  CHAT_MESSAGE: 'chat:message',
+
+  // server → everyone on one floor, after the admin uploaded a new layout for it.
+  // Payload: { floorId, version }   (the browser loads GET /api/rooms/:floorId again)
+  LAYOUT_UPDATE: 'layout:update',
 });

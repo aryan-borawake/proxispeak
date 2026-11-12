@@ -12,7 +12,8 @@ export const EARSHOT_PX = 100;
 // The gap between 100 and 140 stops connections flickering on and off at the edge.
 export const DISCONNECT_PX = 140;
 
-// The most voice connections one person may have at once (their nearest 8). Used from Week 3.
+// The most voice connections one person may have at once. v6: the server enforces it for both people
+// of a pair and keeps the most relevant ones (stage speakers, people in my room, then the nearest).
 export const MAX_PEERS = 8;
 
 // The browser sends its own position to the server at most this many times a second.
@@ -33,18 +34,20 @@ export const WORLD_MAX_PX = 4096;
 // The name of the one office room everybody joins for now.
 export const DEFAULT_ROOM = 'office-1';
 
-// Where a new person appears. A placeholder until the map's lobby is final.
-export const DEFAULT_SPAWN = Object.freeze({ x: 200, y: 200 });
+// Where a new person appears (labs and robot tests). v6: the lobby of the generated office, in front of
+// reception (the same spot as layout.spawn, made by server/scripts/build-office-map.js).
+export const DEFAULT_SPAWN = Object.freeze({ x: 1632, y: 2104 });
 
 // The four directions an avatar can face.
 export const DIRECTIONS = Object.freeze(['up', 'down', 'left', 'right']);
 
 // The kinds of zone the office map can contain (used from Week 3).
+// v6: every area of the map (CONTRACTS.md section 11) has one of these types.
 export const ZONE_TYPES = Object.freeze({
-  OPEN: 'open', // normal floor: you hear people near you
-  PRIVATE: 'private', // meeting room: only people inside hear each other, at full volume
+  OPEN: 'open', // normal floor: you hear people near you (within EARSHOT_PX), quieter with distance
+  PRIVATE: 'private', // meeting room, booth, tea table, desk pod: everyone inside hears everyone inside
   SILENT: 'silent', // focus room: nobody hears anybody
-  STAGE: 'stage', // the speaker on stage is heard by everyone in the stage hall
+  STAGE: 'stage', // stage hall: the speaker on the platform is heard by everyone in the hall
   LOBBY: 'lobby', // the entrance: works like open floor
 });
 
@@ -60,6 +63,7 @@ export const ERROR_CODES = Object.freeze({
   BAD_STATUS: 'BAD_STATUS', // v5: a status that is not one of STATUSES
   BAD_FLOOR: 'BAD_FLOOR', // v5: a floor change to a floor that does not exist, or from a lab join
   WING_CLOSED: 'WING_CLOSED', // v5: a move into a wing that is not open yet (the floor's tier is too small)
+  BAD_CHAT: 'BAD_CHAT', // v6: an area chat message that is empty, too long, or sent from outside a room
 });
 
 // ---- v5: the Infotact office ----
@@ -110,3 +114,34 @@ export const AUDIO_MODES = Object.freeze({
   FALLOFF: 'falloff', // quieter with distance, silent at EARSHOT_PX
   FULL: 'full', // full volume whatever the distance (same private room, stage)
 });
+
+// ---- v6: rooms that work (areas), running, walls, persistence, scaling ----
+
+// Where the "middle" of an avatar is, measured from its position (its top-left corner).
+// "Which area / wing am I in?" always tests this point. Example: avatar at (100, 200) → middle (112, 216).
+export const AVATAR_MIDDLE = Object.freeze({ x: 12, y: 16 });
+
+// Walking speed, and running speed while Shift is held, in pixels per SECOND (not per frame).
+export const WALK_SPEED_PX_PER_SEC = 220;
+export const RUN_SPEED_PX_PER_SEC = 440;
+
+// The server's move check: a player has a "movement budget" that fills at RUN_SPEED_PX_PER_SEC and
+// holds at most this many ms of running (absorbs network bunching). A move longer than the budget is
+// shortened to what the budget allows (never refused, so a slow network can't get anyone stuck).
+export const MOVE_BUDGET_MS = 250;
+
+// The longest area chat message, in characters.
+export const CHAT_MAX_CHARS = 500;
+
+// A voice behind a wall (open areas only) plays at this share of its normal volume.
+export const WALL_MUFFLE_GAIN = 0.3;
+
+// How long a voice takes to fade in or out when its mode changes (open ↔ room) or a wall comes
+// between, in ms. Long enough to never "jump", short enough to feel instant.
+export const AUDIO_FADE_MS = 300;
+
+// The most each microphone sends per connection, in bits per second (32 kbps is clear speech).
+export const AUDIO_MAX_BITRATE_BPS = 32000;
+
+// How often the server logs its tick timing (avg, p95, max), in ms.
+export const TICK_STATS_LOG_MS = 5000;

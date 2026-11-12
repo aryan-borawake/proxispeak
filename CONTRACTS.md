@@ -1,6 +1,6 @@
 # ProxiSpeak Contracts
 
-**v5 — 12 Nov 2026** (the Infotact office: sign-in, floors, desks by department, status, admin — see the new sections 4b, 7b, 9b and 13)
+**v6 — 12 Nov 2026** (rooms that work: areas and the room rules, area chat, the new generated office, running, walls block sound, room persistence, mesh scaling — see sections 3, 4c, 6, 7, 9, 9b, 10, 11 and 12). v5 (the Infotact office) is unchanged underneath.
 
 This file is the single source of truth for how the four modules talk to each other: every event name, payload, function, database shape and file format. If your code and this file disagree, this file wins.
 
@@ -44,14 +44,14 @@ The real numbers and names live in code in `shared/constants.js` and `shared/eve
 |---|---|---|
 | `EARSHOT_PX` | `100` | Connect within this distance; volume reaches 0 here |
 | `DISCONNECT_PX` | `140` | Disconnect only beyond this (stops flicker at the edge) |
-| `MAX_PEERS` | `8` | Nearest-N connection cap, used from Week 3 |
+| `MAX_PEERS` | `8` | v6: enforced. Nobody has more than 8 voice connections, checked for both people of a pair; the least relevant link makes way (section 6) |
 | `MOVE_SEND_HZ` | `10` | The browser sends its position at most 10 times a second |
 | `STATE_BROADCAST_MS` | `100` | The server broadcasts all positions every 100 ms |
 | `PROXIMITY_TICK_MS` | `250` | The server checks "who is near whom?" every 250 ms |
 | `TILE_SIZE` | `32` | One map tile is 32 × 32 px |
 | `WORLD_MAX_PX` | `4096` | Largest x or y; also the 2d index bound |
 | `DEFAULT_ROOM` | `'office-1'` | The one room for now |
-| `DEFAULT_SPAWN` | `{ x: 200, y: 200 }` | Where new people appear (placeholder until the map's lobby is final) |
+| `DEFAULT_SPAWN` | `{ x: 1632, y: 2104 }` | Where `{ name }` joins (labs, robot tests) appear. v6: the lobby of the generated office (same spot as `layout.spawn`) |
 | `DIRECTIONS` | `['up', 'down', 'left', 'right']` | Directions an avatar can face |
 | `ZONE_TYPES` | `{ OPEN: 'open', PRIVATE: 'private', SILENT: 'silent', STAGE: 'stage', LOBBY: 'lobby' }` | Kinds of zone on the map |
 | `AUDIO_MODES` | `{ FALLOFF: 'falloff', FULL: 'full' }` | `falloff` = quieter with distance; `full` = full volume |
@@ -71,6 +71,23 @@ v5 adds (the Infotact office):
 | `TOKEN_TTL_MS` | `43200000` (12 h) | How long a sign-in token works |
 | `AVATAR_COLORS` | six hex colours | The colours a person can pick in the lobby |
 | `ALERT_TYPES` | `{ FLOOR_FULL: 'floor-full', WING_OPENED: 'wing-opened', FLOOR_ADDED: 'floor-added' }` | Kinds of admin alert |
+
+v6 adds (rooms that work, running, walls, scaling):
+
+| Name | Value | Meaning |
+|---|---|---|
+| `AVATAR_MIDDLE` | `{ x: 12, y: 16 }` | The point of an avatar that every "which area / wing am I in?" test uses, measured from its position (top-left) |
+| `WALK_SPEED_PX_PER_SEC` | `220` | Walking speed (px per second, × deltaTime each frame) |
+| `RUN_SPEED_PX_PER_SEC` | `440` | Running speed while Shift is held; also the server's top speed |
+| `MOVE_BUDGET_MS` | `250` | The server's movement budget holds at most this much running (110 px); a longer move is shortened |
+| `CHAT_MAX_CHARS` | `500` | The longest area chat message |
+| `WALL_MUFFLE_GAIN` | `0.3` | A voice behind a wall (open floor) plays at this share of its volume |
+| `AUDIO_FADE_MS` | `300` | How long a voice fades when its mode changes or a wall comes between |
+| `AUDIO_MAX_BITRATE_BPS` | `32000` | What a microphone sends per connection (RTCRtpSender.setParameters) |
+| `TICK_STATS_LOG_MS` | `5000` | How often the server logs its tick timing |
+| `ERROR_CODES.BAD_CHAT` | `'BAD_CHAT'` | An area chat message that is empty, too long, or sent from open floor |
+
+`ZONE_TYPES` is now the type of every **area** (section 11).
 
 **Tiers.** A floor's tier is its number of open wings: tier 1 = A (up to 25 people), 2 = A + B (50), 3 = A–C (75), 4 = A–D (100). It is the smallest tier that fits the floor's headcount and every wing that holds a used or reserved desk, and it only grows.
 
@@ -94,7 +111,7 @@ Use the constant (`EVENTS.MOVE`), never the string (`'player:move'`).
 | `SIGNAL` | `'rtc:signal'` | browser → server → browser | sent `{ to, data }`; delivered `{ from, data }`; `data` is `{ type: 'offer' \| 'answer', sdp }` or `{ type: 'candidate', candidate }` | during handshakes |
 | `SERVER_ERROR` | `'server:error'` | server → one browser | `{ code, message }` | on bad input |
 
-In Weeks 1–2, `mode` is always `'falloff'` and `changed` is always empty.
+v6: `mode` is how the receiver hears that person: `'full'` (same private area, or that person is on the stage platform of my hall) or `'falloff'` (open floor, by distance). `changed` lists people who stay connected but whose mode changed (e.g. they stepped onto the stage). A browser never gets `left` and `entered` for the same person in one message.
 
 v5 changes to the events above (old payloads keep working):
 
@@ -132,6 +149,18 @@ server → everyone  players:state   { t: 1760781234567, players: [{ id: 'a1', x
 
 ---
 
+## 4c. Events added in v6
+
+| Constant | String | Direction | Payload | When |
+|---|---|---|---|---|
+| `CHAT_SEND` | `'chat:send'` | browser → server | `{ text }` (1 … `CHAT_MAX_CHARS` characters) | I post in the chat of the area I stand in |
+| `CHAT_MESSAGE` | `'chat:message'` | server → everyone standing in that area (the sender too) | `{ areaId, areaName, from: { id, name }, text, t }` | after a `CHAT_SEND` |
+| `LAYOUT_UPDATE` | `'layout:update'` | server → everyone on one floor | `{ floorId, version }` | the admin uploaded (or restored) that floor's layout; browsers load `GET /api/rooms/:floorId` again |
+
+**Area chat.** The server finds the sender's area itself, in memory, from where it knows they stand (never from the browser). Only private, silent and stage areas have a chat; from open floor → `SERVER_ERROR` `BAD_CHAT`. Messages are not stored: someone who walks in later sees no older messages.
+
+**Moves (v6).** For signed-in employees the server checks the speed (`server/signaling/moveCheck.js`): a movement budget fills at `RUN_SPEED_PX_PER_SEC` and holds `MOVE_BUDGET_MS` of running; a longer move is shortened to the budget (never refused). Free jumps: the first move after a join or floor change, my own desk, the lobby spawn, the elevator. `{ name }` joins are not checked.
+
 ## 5. Signaling rules
 
 **Signaling** means passing WebRTC setup notes (offer, answer, ICE candidates) between two browsers through our server before their direct voice connection starts.
@@ -156,7 +185,18 @@ createGeoEngine({ roomId })                      // → { upsertPositions, findN
   removeUser(userId)                             // → Promise
 computePeerChanges(currentPeerIds, nearby, { connectPx, disconnectPx })
                                                  // pure; currentPeerIds: Set; → { entered: [id], left: [id] }
-// PLANNED Week 3: usersInZone(zone) via $geoWithin; canHear(a, b) → { audible, mode }
+// v6 (Person 2's module, extended): areas, the room rules, room persistence
+  usersInArea(area)                              // engine method → Promise<[id]>; one find with $geoWithin
+  locateUsers(areas)                             // engine method → Promise<Map id → { areaId, onPlatform }>;
+                                                 // ONE aggregate per room: $match roomId, $facet of $geoWithin
+saveAreas(floorId, areas) / loadAreas(floorId)   // the `areas` collection
+canHear(listener, speaker, { connected })        // pure → { audible, mode: 'full' | 'falloff' } (section 11)
+  // listener / speaker: { x, y, status, area /* or null */, onPlatform }; directional (the stage)
+shouldConnect(a, b, options)                     // canHear(a, b).audible || canHear(b, a).audible
+areaAt(areas, x, y) / isOnPlatform(area, x, y)   // pure, in memory (avatar middle point)
+ensureGeneratedRoom(generated, { force }) / saveUploadedRoom(floorId, map, areas) / loadRoom(id) / listRooms()
+validateTiledMap(map) → { ok, errors, areas } / areasFromTiledMap(map)
+createRoomsRouter({ requireAdmin, isFloor, ensureRoom, onLayoutSaved })   // section 9b
 
 // server/signaling/index.js (Person 1)
 attachSignaling(io, { geo, createGeoEngine })    // v5: createGeoEngine (optional) makes one engine per
@@ -217,6 +257,8 @@ computePeerChanges(
 
 Positions live in the server's memory. MongoDB is only touched inside this tick, never once per `MOVE` message.
 
+**v6 tick.** 1. movers → 2. one `upsertPositions` per room → 3. `locateUsers(areas)` per room (who is in which area; in memory without MongoDB) → 4. `findNearby` for every mover (open-floor candidates) → 5. per mover: candidates = nearby ∪ current peers ∪ everyone in the same private area / stage hall; `shouldConnect` decides; each side's mode from `canHear`; MAX_PEERS for both people: when someone is full, their least relevant link (rank: `full` links first, then `falloff`, then links only the other person needs; nearest first) makes way for a more relevant one → 6. one `peers:update` per browser (`entered`, `left`, `changed`). Labs and robot tests (`DEFAULT_ROOM`) have no areas: plain proximity, as before.
+
 ---
 
 ## 7. Client module interfaces
@@ -246,6 +288,12 @@ net.changeFloor(floorId) / net.onFloorChanged(cb)  // EVENTS.FLOOR_CHANGE / FLOO
 net.leave()                                        // hang up on purpose (no automatic re-join)
 SERVER_URL                                         // named export, for REST calls
 
+// v6 additions to `net`
+net.sendChat(text) / net.onChatMessage(cb)          // EVENTS.CHAT_SEND / CHAT_MESSAGE (area chat)
+net.onLayoutUpdate(cb)                              // EVENTS.LAYOUT_UPDATE
+net.onServerError(cb)                               // EVENTS.SERVER_ERROR (e.g. BAD_CHAT)
+// rtc manager: every connection's audio sender is capped at AUDIO_MAX_BITRATE_BPS once 'connected'
+
 // client/src/world/index.js (Person 3)
 WorldCanvas                    // props: { net, selfId, spawn, initialPlayers, onFrame, debug }
                                // v5, all optional: fill, zoomable, controllerRef (gets { zoomIn, zoomOut,
@@ -254,7 +302,11 @@ WorldCanvas                    // props: { net, selfId, spawn, initialPlayers, o
                                // overlayData ({ layout, office }), onZoomChange(zoom), onNearElevator(bool), background
                                // onFrame(frame) every animation frame:
                                // frame = { self: { id, x, y }, others: [{ id, x, y, blocked }] }
-                               // blocked is false until Week 3
+                               // v6: blocked = a wall tile on the line between us (both on open floor, within
+                               // DISCONNECT_PX); never set inside private / stage areas (the server decides there)
+                               // v6 props, optional: onAreaChange(area | null), mapData (a Tiled map object to draw
+                               // instead of /maps/office.json), showFps. Shift = run. Inside a room the rest of the
+                               // map is dimmed. createFakeNet has the v6 net functions too (they do nothing).
 createFakeNet({ bots })        // same functions as `net`, with wandering bots
 WorldLab                       // React component
 
@@ -262,6 +314,8 @@ WorldLab                       // React component
 distanceToGain(distancePx)     // → 0..1, 0 at or beyond EARSHOT_PX
 dxToPan(dxPx)                  // → -1..1, negative = speaker is to the left
 createMixer()                  // → { resume(), addPeer(id, mediaStream), removePeer(id), setMode(id, mode), update(frame) }
+                               // v6: 'full' = a constant distanceToGain(TILE_SIZE) ≈ 0.77; blocked → × WALL_MUFFLE_GAIN;
+                               // new voices, mode changes and wall changes fade over AUDIO_FADE_MS
 createMicMeter(stream)         // → { getLevel(), stop() }
 AudioControls                  // props: { micStream, muted, onToggleMute }
 AudioLab                       // React component
@@ -364,12 +418,17 @@ Token: `Authorization: Bearer <token>`. A token is `base64url(JSON { sub: employ
 | `GET` / `POST /api/admin/floors` | admin | floor snapshots / → the new floor (`floor-2`, …) |
 | `POST /api/admin/floors/apply` | admin | `{ moves: [{ departmentId, floorId }] }` → `{ moved, reseated }` (rebalance; online members are moved) |
 | `GET /api/admin/alerts`, `POST /api/admin/alerts/:id/resolve` | admin | alerts / → the resolved alert |
+| `GET /api/rooms/:id` (v6) | anyone | → the floor's stored layout `{ _id, floorId, name, version, source, updatedAt, map, desks, areas }`, or 404 |
+| `GET /api/rooms` (v6) | admin | → `[{ _id, floorId, name, version, source, updatedAt, mapHash, areas: n, desks: n }]` |
+| `POST /api/rooms/:id/layout` (v6) | admin | body = a Tiled JSON map (≤ 5 MB) → validated (section 10) → saved as the next version, desks kept, areas from its `zones` layer → `{ _id, version, source, updatedAt, areas: n }`; 400 `{ error, errors: [...] }` if not usable; the floor gets `LAYOUT_UPDATE` |
+| `POST /api/rooms/:id/generated` (v6) | admin | → back to the generated layout (the next version) |
+| `GET /api/health` | anyone | v6 adds `tick`: the last 5 s of tick timing `{ ticks, avgMs, p95Ms, maxMs, movedPerTick, online, peersPerUserAvg, peersPerUserMax }` |
 
 Every `/api/admin/*` route checks on the server that the token has `admin: true` and the employee's role is `admin` (else 401 / 403). An employee token never has `admin: true`, even for the admin person.
 
-**PLANNED Week 3 — `zones`:** `{ roomId, name, type, box: [[x1, y1], [x2, y2]] }`. `type` is one of `ZONE_TYPES`; `box` is the top-left and bottom-right corners.
+**v6 — `areas`** (`server/geo/models/Area.js`): `{ _id: 'floor-1:meeting-2', floorId, areaId, name, type /* ZONE_TYPES */, box: [[x1, y1], [x2, y2]] | polygon: [[x, y], …], platform? /* stage only */, updatedAt }`. Px, around the avatar's middle (`AVATAR_MIDDLE`); `$geoWithin` queries shift the shape by that much because `positions.loc` is the top-left. Rewritten at start-up and after a layout upload, never per move.
 
-**PLANNED Week 4 — `rooms`:** `{ _id: roomId, name, map /* Tiled JSON */, updatedAt }`.
+**v6 — `rooms`** (`server/geo/models/Room.js`): `{ _id: floorId, floorId, name, map /* Tiled JSON */, desks, areas, version /* 1, 2, … */, source: 'generated' | 'uploaded', mapHash, updatedAt }`. Start-up stores the generated layout (a new version when its `mapHash` changed; an uploaded layout is kept). Without MongoDB: in memory.
 
 ---
 
@@ -402,27 +461,32 @@ Layers, in this order and with exactly these names:
 
 To change the original office: edit `office.tmx` in Tiled, export to `office-base.json` (not `office.json`), then run the script.
 
+**v6 — the generated office.** `build-office-map.js` now draws the whole floor by code (`server/scripts/office-map/plan.js`, `builder.js`, `tiles.js`) with the three LimeZu tilesets embedded from `office-base.json`: 110 × 80 tiles. Layers: `floor`, `rugs`, `walls` (dark wall tops + 2-tile wall faces; blocks walking and sound), `furniture`, `decor`, `collision` (invisible, 1 = blocked), object layers `zones` (one rectangle per area: properties `areaId`, `name`, `zoneType`, and `platform` = "x1,y1,x2,y2" for the stage) and `spawn` (a point named `spawn`). `layout.json` keeps its v5 fields (wings are now the 4 desk **neighbourhoods**, `name` added; desks keep a 5 × 5 logical `row`/`col` grid, snake-numbered, plus `pod`) and adds `areas`, `mapHash`. An uploaded map must be orthogonal, 32 px tiles, ≤ 128 × 128, with embedded tilesets, the tile layers `floor`, `walls`, `furniture`, `collision`, the object layers `zones` and `spawn`; every zone needs a valid `zoneType` and a `name`.
+
 ---
 
-## 11. Zone rules (PLANNED, Weeks 3–4)
+## 11. Zone rules (v6: built — server/geo/canHear.js)
 
 | Zone | A hears B when | Mode |
 |---|---|---|
-| open | B within `EARSHOT_PX` and no wall between | `falloff` |
+| open | B within `EARSHOT_PX` (stay connected up to `DISCONNECT_PX`), both on open floor; a wall between muffles to `WALL_MUFFLE_GAIN` (browser) | `falloff` |
 | lobby | same as open | `falloff` |
-| private | A and B in the same private zone | `full` |
-| silent | never | — |
-| stage | B is on the stage and A is in the stage hall (receive-only) | `full` |
+| private | A and B in the same private area, any distance. Nobody outside hears in, nobody inside hears out | `full` (constant, fades in over `AUDIO_FADE_MS`) |
+| silent | never (in or out) | — |
+| stage | B is on the platform and A is anywhere in the same hall (receive-only); two audience members hear each other by proximity | `full` / `falloff` |
+| any | A or B is Do Not Disturb → never (checked first). Different areas where either is private / silent / stage → never. MAX_PEERS applies everywhere | — |
 
 **Which map areas use which zone type:**
 
-| Map area | Zone type |
+| Map area (v6 generated office) | Zone type |
 |---|---|
-| Entrance | `lobby` |
-| Desks and lounge | `open` (no zone object needed) |
-| Meeting room, phone booth | `private` |
-| Focus room | `silent` |
-| Stage hall | `stage` |
+| Lobby | `lobby` |
+| Corridors, kitchen, library lounge, café, hot-desk room, neighbourhoods, garden terrace | `open` |
+| Boardroom, meeting rooms 2–7, phone booths, every desk pod, hot-desk pods, tea and café tables, sofa corners | `private` |
+| Focus rooms 1 and 2 | `silent` |
+| Stage hall (with its platform) | `stage` |
+
+Labs and robot tests (`DEFAULT_ROOM`) have no areas: everybody there is on open floor.
 
 ---
 
@@ -443,7 +507,13 @@ To change the original office: edit `office.tmx` in Tiled, export to `office-bas
 | v5 | 12 Nov 2026 | Collections: `departments`, `employees`, `floors`, `alerts` (section 9) |
 | v5 | 12 Nov 2026 | Interfaces: `attachSignaling(io, { geo, createGeoEngine })` returns `{ getOnlineEmployeeIds }`; `net.sendStatus`, `onPlayerStatus`, `onOfficeUpdate`, `changeFloor`, `onFloorChanged`, `leave`, `SERVER_URL`; optional `WorldCanvas` props for the office; pure `chooseDesk`, `reserveBlock`, `resizeBlock`, `planRebalance`, tier functions |
 | v5 | 12 Nov 2026 | Map: `office.json` generated from `office-base.json` by `server/scripts/build-office-map.js` (85 × 53 tiles, 4 wings × 25 desks, 14 hot desks, elevator, invisible `collision` layer); `server/office/layout.json` |
+| v6 | 12 Nov 2026 | Constants: `AVATAR_MIDDLE`, `WALK_SPEED_PX_PER_SEC`, `RUN_SPEED_PX_PER_SEC`, `MOVE_BUDGET_MS`, `CHAT_MAX_CHARS`, `WALL_MUFFLE_GAIN`, `AUDIO_FADE_MS`, `AUDIO_MAX_BITRATE_BPS`, `TICK_STATS_LOG_MS`; error code `BAD_CHAT`; `DEFAULT_SPAWN` → the lobby (1632, 2104); `MAX_PEERS` enforced |
+| v6 | 12 Nov 2026 | Events: `CHAT_SEND` (`chat:send`), `CHAT_MESSAGE` (`chat:message`), `LAYOUT_UPDATE` (`layout:update`) — section 4c; `PEERS_UPDATE` now carries real modes and `changed` |
+| v6 | 12 Nov 2026 | Zone rules built (section 11): areas, `canHear`, `locateUsers` / `usersInArea` with `$geoWithin`, the v6 tick with MAX_PEERS; server speed check for moves |
+| v6 | 12 Nov 2026 | Collections `areas` and `rooms` (section 9); REST `/api/rooms`, `/api/rooms/:id`, `/api/rooms/:id/layout`, `/api/rooms/:id/generated`; `/api/health` `tick` |
+| v6 | 12 Nov 2026 | Map: the generated 110 × 80 office (section 10), layers `floor`, `rugs`, `walls`, `furniture`, `decor`, `collision`, `zones`, `spawn`; `layout.json` adds `areas`, `mapHash`, wing `name`, desk `pod` |
+| v6 | 12 Nov 2026 | Client: `net.sendChat`, `onChatMessage`, `onLayoutUpdate`, `onServerError`; WorldCanvas `onAreaChange`, `mapData`, `showFps`, `frame.others[].blocked`; mixer full gain / muffling / fades; rtc 32 kbps cap |
 
-## 13. The Infotact office in one paragraph (v5)
+## 13. The Infotact office in one paragraph (v5, v6)
 
-Landing (`#/`) → sign-in (`#/signin`: Employee by email, or Admin by email + password) → lobby (`#/lobby`: colour, mic test) → office (`#/office`) or admin (`#/admin`). The office is one floor plan used by every floor; a floor opens wing by wing as it grows (tiers); each department sits in its own block of neighbouring desks; overflow hires get hot desks and the admin is alerted; the admin adds a floor and moves departments to it. `?lab=world|audio|rtc|office` pages are unchanged.
+Landing (`#/`) → sign-in (`#/signin`: Employee by email, or Admin by email + password) → lobby (`#/lobby`: colour, mic test) → office (`#/office`) or admin (`#/admin`). The office is one floor plan used by every floor; a floor opens wing by wing as it grows (tiers); each department sits in its own block of neighbouring desks; overflow hires get hot desks and the admin is alerted; the admin adds a floor and moves departments to it. `?lab=world|audio|rtc|office` pages are unchanged. v6: the floor is a warm generated office (neighbourhoods of desk pods, meeting rooms of three sizes, booths, focus rooms, stage hall, kitchen, lobby, terrace); rooms change how you hear (section 11) and have an area chat; walls muffle voices on open floor; Shift runs; the admin stores and uploads layouts (Layouts).
