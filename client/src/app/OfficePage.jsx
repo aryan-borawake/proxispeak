@@ -14,9 +14,10 @@
 // second (PANEL_REFRESH_MS), never every frame.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AVATAR_COLORS, EARSHOT_PX, STATUSES } from '@shared/constants.js';
+import { AVATAR_COLORS, EARSHOT_PX, ERROR_CODES, STATUSES } from '@shared/constants.js';
 import { net } from '../net/index.js';
-import { WorldCanvas } from '../world/index.js';
+import { WorldCanvas, areaAt, isClosedArea } from '../world/index.js';
+import { AreaChatPanel } from './AreaChat.jsx';
 import { useVoiceSession } from './useVoiceSession.js';
 import { api, clearSession, getAvatarColor, getToken } from './session.js';
 import { ROUTES, navigate } from './router.js';
@@ -50,19 +51,30 @@ function standsIn(x, y, rect) {
 }
 
 /**
- * The name for the top bar: the department block I'm standing in, else the room, else ''.
- * Example: standing at desk A-03 (Engineering's block) → 'Engineering'; in the lounge → 'Lounge'.
+ * The name for the top bar. v6: a room (meeting room, booth, focus room, stage hall) first; on a desk
+ * pod, the department too; else the open area or room; else ''.
+ * Example: in Meeting room 2 → 'Meeting room 2'; at desk A-03 → 'Engineering · Pod A1'; in the lounge → 'Lounge'.
  */
 function areaNameAt(x, y, layout, office) {
   if (!layout) return '';
-  if (office) {
+  const area = areaAt(layout.areas, x, y);
+  const department = office ? departmentAt(x, y, layout, office) : '';
+  if (area && department) return `${department} · ${area.name}`;
+  if (area) return area.name;
+  if (department) return department;
+  const room = layout.rooms.find((r) => standsIn(x, y, r.rect));
+  return room ? room.name : '';
+}
+
+/** The department whose desk block I'm standing on, or ''. */
+function departmentAt(x, y, layout, office) {
+  {
     const desksById = new Map(layout.desks.map((desk) => [desk.id, desk]));
     for (const department of office.departments) {
       if (department.deskIds.some((id) => desksById.get(id) && standsIn(x, y, desksById.get(id).area))) return department.name;
     }
   }
-  const room = layout.rooms.find((r) => standsIn(x, y, r.rect));
-  return room ? room.name : '';
+  return '';
 }
 
 export function OfficePage() {
@@ -78,7 +90,10 @@ export function OfficePage() {
   const [muted, setMuted] = useState(false);
   const [voiceReady, setVoiceReady] = useState(false);
   const [menu, setMenu] = useState(null); // null, 'status' or 'floors'
-  const [peopleOpen, setPeopleOpen] = useState(true);
+  // v6: the right panel: 'people', 'chat' (only inside a room) or null (closed).
+  const [sidePanel, setSidePanel] = useState('people');
+  const [currentArea, setCurrentArea] = useState(null); // the area I stand in (from WorldCanvas)
+  const [chatMessages, setChatMessages] = useState([]); // this area's chat, since I walked in
   const [zoom, setZoom] = useState(START_ZOOM);
   const [nearElevator, setNearElevator] = useState(false);
   const [panel, setPanel] = useState({ online: [], nearby: [], area: '' });
@@ -86,17 +101,34 @@ export function OfficePage() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [avatarColor] = useState(() => getAvatarColor() || AVATAR_COLORS[0]);
   const [soundBlocked, setSoundBlocked] = useState(false); // the browser wants a click before sound
+  const [showFps, setShowFps] = useState(false); // v6: the F key shows the frames-per-second counter
 
   // Refs: read by listeners and the world without redrawing the page.
   const peopleRef = useRef({}); // id → { name, color, dotColor, status, department }
   const selfDotColorRef = useRef(statusColor(STATUSES.AVAILABLE));
   const controllerRef = useRef(null); // filled by WorldCanvas: zoomIn, jumpTo, pulseAt, …
   const latest = useRef({}); // the latest world, profile, office, nearElevator for listeners
-  latest.current = { world, profile, office, nearElevator, voiceReady };
+  latest.current = { world, profile, office, nearElevator, voiceReady, currentArea };
   const pendingDeskRef = useRef(false); // "go to my desk" waiting for a floor change
   const versionRef = useRef(0);
 
-  const overlayData = useMemo(() => ({ layout, office }), [layout, office]);
+  // v6: this floor's stored layout (GET /api/rooms/:floorId): { map, areas, version }; undefined while
+  // loading, null if it could not be loaded (then the world draws the static /maps/office.json).
+  const [room, setRoom] = useState(undefined);
+  const [roomReload, setRoomReload] = useState(0); // bumped by EVENTS.LAYOUT_UPDATE
+  const loadedRoomIdRef = useRef(null);
+  const floorLayout = useMemo(() => (layout && room?.areas ? { ...layout, areas: room.areas } : layout), [layout, room]);
+  const overlayData = useMemo(() => ({ layout: floorLayout, office }), [floorLayout, office]);
+
+  // Development only: let the headless screenshot scripts (server/scripts/screens-*.js) steer the world.
+  // import.meta.env.DEV is false in the built app, so this never reaches production.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return undefined;
+    window.__officeController = () => controllerRef.current;
+    return () => {
+      delete window.__officeController;
+    };
+  }, []);
 
   /** Remember one person for the map labels and the panel. */
   function rememberPerson(player) {
@@ -184,6 +216,25 @@ export function OfficePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // v6: load this floor's stored layout whenever I'm on a new floor (or the admin uploaded a new one).
+  const roomId = world?.roomId;
+  useEffect(() => {
+    if (!roomId) return undefined;
+    let cancelled = false;
+    // A different floor: wait for its layout before drawing it (a reload keeps the old map until then).
+    if (loadedRoomIdRef.current !== roomId) setRoom(undefined);
+    loadedRoomIdRef.current = roomId;
+    api(`/api/rooms/${roomId}`)
+      .then((stored) => !cancelled && setRoom({ map: stored.map, areas: stored.areas, version: stored.version }))
+      .catch((error) => {
+        console.warn(`[office] could not load the stored layout of ${roomId}, using /maps/office.json:`, error.message);
+        if (!cancelled) setRoom(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId, roomReload]);
+
   // Listen to the server while on this page.
   useEffect(() => {
     const stops = [
@@ -215,6 +266,19 @@ export function OfficePage() {
           pendingDeskRef.current = false;
           setTimeout(() => goToDesk(), DESK_AFTER_FLOOR_MS);
         }
+      }),
+      // v6: area chat. Only messages for the area I'm in right now (the server only sends those anyway).
+      net.onChatMessage((message) => {
+        if (message.areaId !== latest.current.currentArea?.id) return;
+        setChatMessages((list) => [...list, message]);
+      }),
+      net.onLayoutUpdate(({ floorId, version }) => {
+        if (floorId !== latest.current.world?.roomId) return;
+        showToast(`This floor has a new layout (version ${version}). Loading it…`);
+        setRoomReload((n) => n + 1);
+      }),
+      net.onServerError(({ code, message }) => {
+        if (code === ERROR_CODES.BAD_CHAT) showToast(message);
       }),
       net.onRejoin((init) => {
         // A reconnect: NEW selfId. Rebuild the voice connections and the world at my last spot.
@@ -251,7 +315,7 @@ export function OfficePage() {
     showToast(me.hotDesk ? `This is hot desk ${me.deskId}.` : `This is your desk, ${me.deskId}.`);
   }
 
-  // Keyboard shortcuts: Ctrl+D (my desk), E (elevator, when standing at it), Escape (close menus).
+  // Keyboard shortcuts: Ctrl+D (my desk), E (elevator, when standing at it), F (FPS counter), Escape (close menus).
   useEffect(() => {
     function handleKey(event) {
       const typing = event.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
@@ -265,6 +329,7 @@ export function OfficePage() {
         setMenu('floors');
       }
       if (event.key === 'Escape') setMenu(null);
+      if (event.key.toLowerCase() === 'f' && !event.ctrlKey && !event.metaKey) setShowFps((on) => !on);
       // Arrow keys walk; stop them scrolling the page.
       if (event.key.startsWith('Arrow')) event.preventDefault();
     }
@@ -279,7 +344,11 @@ export function OfficePage() {
     const timer = setInterval(() => {
       const frame = voice.frameRef.current;
       const gains = {};
-      for (const diagnostic of voice.mixerRef.current?.getPeerDiagnostics() || []) gains[diagnostic.id] = diagnostic.gain;
+      const muffled = {};
+      for (const diagnostic of voice.mixerRef.current?.getPeerDiagnostics() || []) {
+        gains[diagnostic.id] = diagnostic.gain;
+        muffled[diagnostic.id] = diagnostic.blocked === true;
+      }
       const departmentsById = {};
       for (const department of latest.current.office?.departments || []) departmentsById[department.id] = department;
 
@@ -293,6 +362,7 @@ export function OfficePage() {
           departmentName: department?.name,
           departmentColor: department?.color,
           hearing: (gains[id] || 0) > HEARING_GAIN,
+          muffled: muffled[id] === true, // v6: behind a wall (open floor)
           ...extra,
         };
       };
@@ -316,17 +386,22 @@ export function OfficePage() {
       if (frame) {
         const positions = {};
         for (const other of frame.others) positions[other.id] = other;
+        // v6: nearby = within earshot, or someone I can hear, or in the same room as me (any distance).
+        const myArea = areaAt(floorLayout?.areas, frame.self.x, frame.self.y);
         nearby = others.filter((person) => {
           const position = positions[person.id];
-          return position && Math.hypot(position.x - frame.self.x, position.y - frame.self.y) <= EARSHOT_PX;
+          if (!position) return false;
+          if (person.hearing) return true;
+          if (isClosedArea(myArea) && areaAt(floorLayout?.areas, position.x, position.y)?.id === myArea.id) return true;
+          return !isClosedArea(myArea) && Math.hypot(position.x - frame.self.x, position.y - frame.self.y) <= EARSHOT_PX;
         });
-        area = areaNameAt(frame.self.x, frame.self.y, layout, latest.current.office);
+        area = areaNameAt(frame.self.x, frame.self.y, floorLayout, latest.current.office);
       }
       setPanel({ online: [self, ...others], nearby, area });
     }, PANEL_REFRESH_MS);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, layout]);
+  }, [phase, floorLayout]);
 
   // My status, also in a ref for the panel timer.
   const selfStatusRef = useRef(status);
@@ -345,6 +420,17 @@ export function OfficePage() {
     setMuted(nextMuted);
   }
 
+  /**
+   * v6: WorldCanvas says I stepped into or out of an area. A new room means a fresh, empty chat
+   * (nothing is stored, like Gather); stepping into a room opens the chat, leaving it shows People.
+   */
+  function handleAreaChange(area) {
+    setCurrentArea(area);
+    setChatMessages([]);
+    if (isClosedArea(area)) setSidePanel((panel) => (panel === null ? null : 'chat'));
+    else setSidePanel((panel) => (panel === 'chat' ? 'people' : panel));
+  }
+
   function pickFloor(floorId) {
     setMenu(null);
     if (floorId !== world?.roomId) net.changeFloor(floorId);
@@ -361,13 +447,14 @@ export function OfficePage() {
 
   return (
     <div className="office-root">
-      <TopBar floorName={floorName} areaName={panel.area} />
+      <TopBar floorName={floorName} areaName={panel.area} areaType={isClosedArea(currentArea) ? currentArea.type : null} />
 
-      <div className={`office-stage ${peopleOpen ? 'office-stage-with-panel' : ''}`}>
-        {world && (
+      <div className={`office-stage ${sidePanel ? 'office-stage-with-panel' : ''}`}>
+        {world && room !== undefined && (
           // key: a new selfId (reconnect) or a new floor builds a fresh world.
           <WorldCanvas
-            key={`${world.selfId}:${world.roomId}:${world.version}`}
+            key={`${world.selfId}:${world.roomId}:${world.version}:${room?.version || 0}`}
+            mapData={room?.map}
             fill
             zoomable
             net={net}
@@ -383,7 +470,9 @@ export function OfficePage() {
             overlayData={overlayData}
             onZoomChange={setZoom}
             onNearElevator={setNearElevator}
-            background="#8fd3f4"
+            onAreaChange={handleAreaChange}
+            showFps={showFps}
+            background="#1b2030"
           />
         )}
 
@@ -435,7 +524,10 @@ export function OfficePage() {
         )}
       </div>
 
-      {peopleOpen && <PeoplePanel floorName={floorName} online={panel.online} nearby={panel.nearby} onClose={() => setPeopleOpen(false)} />}
+      {sidePanel === 'chat' && isClosedArea(currentArea) && (
+        <AreaChatPanel area={currentArea} messages={chatMessages} selfId={world?.selfId} onSend={(text) => net.sendChat(text)} onClose={() => setSidePanel(null)} />
+      )}
+      {sidePanel === 'people' && <PeoplePanel floorName={floorName} online={panel.online} nearby={panel.nearby} onClose={() => setSidePanel(null)} />}
 
       <BottomBar
         profile={profile}
@@ -448,8 +540,11 @@ export function OfficePage() {
         onMyDesk={goToDesk}
         onFloors={() => setMenu('floors')}
         onLeave={() => leave(ROUTES.LOBBY)}
-        onTogglePeople={() => setPeopleOpen(!peopleOpen)}
-        peopleOpen={peopleOpen}
+        onTogglePeople={() => setSidePanel(sidePanel === 'people' ? null : 'people')}
+        peopleOpen={sidePanel === 'people'}
+        chatOpen={sidePanel === 'chat'}
+        canChat={isClosedArea(currentArea)}
+        onToggleChat={() => setSidePanel(sidePanel === 'chat' ? null : 'chat')}
         onlineCount={panel.online.length}
       />
 

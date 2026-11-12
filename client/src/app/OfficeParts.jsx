@@ -12,7 +12,15 @@ import { STATUSES } from '@shared/constants.js';
 import { Icon } from './icons.jsx';
 import { initialsOf, roleLabel, STATUS_INFO, statusColor } from './people.js';
 
-export function TopBar({ floorName, areaName, onToggleView }) {
+/** v6: the small badge next to a room's name in the top bar. */
+const AREA_BADGES = {
+  private: { text: 'Private', className: 'area-badge' },
+  silent: { text: 'Silent', className: 'area-badge area-badge-silent' },
+  stage: { text: 'Stage', className: 'area-badge area-badge-stage' },
+};
+
+export function TopBar({ floorName, areaName, areaType, onToggleView }) {
+  const badge = areaType ? AREA_BADGES[areaType] : null;
   return (
     <header className="office-topbar">
       <div className="office-topbar-left">
@@ -29,13 +37,14 @@ export function TopBar({ floorName, areaName, onToggleView }) {
             <span style={{ color: 'var(--accent)' }}>{areaName}</span>
           </>
         )}
+        {badge && <span className={badge.className}>{badge.text}</span>}
       </div>
       <div className="office-topbar-right">{onToggleView}</div>
     </header>
   );
 }
 
-export function BottomBar({ profile, avatarColor, status, muted, voiceReady, onOpenStatus, onToggleMute, onMyDesk, onFloors, onLeave, onTogglePeople, peopleOpen, onlineCount }) {
+export function BottomBar({ profile, avatarColor, status, muted, voiceReady, onOpenStatus, onToggleMute, onMyDesk, onFloors, onLeave, onTogglePeople, peopleOpen, onlineCount, chatOpen, canChat, onToggleChat }) {
   const info = STATUS_INFO[status] || STATUS_INFO[STATUSES.AVAILABLE];
   return (
     <footer className="office-bottombar">
@@ -66,6 +75,11 @@ export function BottomBar({ profile, avatarColor, status, muted, voiceReady, onO
 
       <div className="bar-spacer" />
 
+      {canChat && (
+        <button className={`bar-btn ${chatOpen ? 'bar-btn-active' : ''}`} onClick={onToggleChat} title="Chat with the people in this room">
+          <Icon.Chat /> Chat
+        </button>
+      )}
       <button className={`bar-btn ${peopleOpen ? 'bar-btn-active' : ''}`} onClick={onTogglePeople}>
         <Icon.People /> {onlineCount}
       </button>
@@ -151,9 +165,14 @@ function PersonRow({ person }) {
           {person.departmentName || 'Guest'} · {(STATUS_INFO[person.status] || STATUS_INFO[STATUSES.AVAILABLE]).label}
         </span>
       </span>
-      {person.hearing && (
+      {person.hearing && !person.muffled && (
         <span className="hear-icon" title="You can hear them">
           <Icon.Speaker size={17} />
+        </span>
+      )}
+      {person.muffled && (
+        <span className="muffled-icon" title="Behind a wall: their voice is muffled" aria-label="Muffled by a wall">
+          <Icon.Muffled size={17} />
         </span>
       )}
     </div>

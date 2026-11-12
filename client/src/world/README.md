@@ -148,3 +148,23 @@ In the World Lab:
   bigger map simply uses the follow camera there.
 - `officeOverlay.js` (new): department borders, closed wings, room labels, elevator, desk pulse,
   avatars and name tags.
+
+## 7. v6 changes: a new office layout (added by Person 1) — please read, Anjali
+
+- **The floor is now drawn by code**, not copied from your Tiled map: `server/scripts/office-map/plan.js`
+  (the plan), `builder.js` (floors, walls with faces, stamps), `tiles.js` (which tiles we use).
+  `node server/scripts/build-office-map.js` writes `office.json` and `server/office/layout.json`.
+  It is a 110 × 80 Gather-style office: desk neighbourhoods (pods of 4–8 among plants), meeting rooms of
+  three sizes, phone booths, focus rooms, a stage hall, kitchen with tea tables, a lobby with a coffee
+  bar, a terrace. Same three LimeZu tilesets, so the same art style.
+- **Your original office no longer appears as one block** (it did not fit the new plan), but its pieces
+  are kept and recognisable: your white meeting table (same tiles) in every meeting room, your
+  reception desk in the lobby, your grey lounge sofas and floor lamp, your salmon wall colour in the
+  corridors and your striped wood floor. `office-base.json` and `office.tmx` are unchanged; the
+  generator now only takes the embedded tilesets from `office-base.json`.
+- To change the layout: edit `plan.js` and run the script, or (stage 5) upload a Tiled JSON on the
+  admin page (Layouts). Exporting from Tiled straight into `office.json` would get out of step with
+  `layout.json` (desks, areas), so don't.
+- New in the world module: `areas.js` (which area am I in), the area highlight (a dark film around the
+  room you're in), "coming soon" neighbourhoods (light cover + rope), department outlines that follow
+  any desk shape, Shift to run, wall-muffled voices (`soundWalls.js`) and the F key FPS counter.

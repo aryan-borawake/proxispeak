@@ -39,12 +39,13 @@ export function createFakeNet({ bots = 3 } = {}) {
 
   // Generate initial bots scattered across office zones
   const botList = [];
+  // v6: spots in the new generated office (px): lobby, corridor, kitchen, library lounge, stage hall.
   const startPositions = [
-    { x: 320, y: 350, dir: 'down' }, // Hallway outside Lobby
-    { x: 450, y: 160, dir: 'left' }, // Meeting Room table
-    { x: 260, y: 560, dir: 'up' },   // Open Desks area
-    { x: 920, y: 160, dir: 'down' }, // Stage area
-    { x: 880, y: 580, dir: 'left' }, // Lounge area
+    { x: 1700, y: 2060, dir: 'down' }, // Lobby, near reception
+    { x: 1500, y: 740, dir: 'left' }, // North corridor
+    { x: 560, y: 2000, dir: 'up' }, // Kitchen
+    { x: 450, y: 1400, dir: 'down' }, // Library lounge
+    { x: 470, y: 520, dir: 'left' }, // Stage hall
   ];
 
   for (let i = 0; i < bots; i++) {
@@ -180,6 +181,19 @@ export function createFakeNet({ bots = 3 } = {}) {
 
     sendSignal({ to, data }) {
       // Mock signaling handshake for local testing
+    },
+
+    // v6: area chat and layout updates. The bots don't chat, so these do nothing; they exist so
+    // the fake has exactly the same functions as `net`.
+    sendChat() {},
+    onChatMessage() {
+      return () => {};
+    },
+    onLayoutUpdate() {
+      return () => {};
+    },
+    onServerError() {
+      return () => {};
     },
 
     destroy() {

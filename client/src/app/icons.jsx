@@ -127,4 +127,24 @@ export const Icon = {
       <path d="M9 6l6 6-6 6" />
     </Svg>
   ),
+  // v6: area chat (a speech bubble), a voice muffled by a wall (speaker behind a bar), layouts (a map).
+  Chat: (props) => (
+    <Svg {...props}>
+      <path d="M4 5h16v11H9l-5 4V5z" />
+      <path d="M8 9h8M8 12h5" />
+    </Svg>
+  ),
+  Muffled: (props) => (
+    <Svg {...props}>
+      <path d="M3 9v6h3l4 4V5L6 9H3z" />
+      <path d="M14 4v16" strokeWidth="3" />
+      <path d="M18 9.5a3.5 3.5 0 0 1 0 5" />
+    </Svg>
+  ),
+  Map: (props) => (
+    <Svg {...props}>
+      <path d="M3 6l6-2 6 2 6-2v14l-6 2-6-2-6 2V6z" />
+      <path d="M9 4v14M15 6v14" />
+    </Svg>
+  ),
 };

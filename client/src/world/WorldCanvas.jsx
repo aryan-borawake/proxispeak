@@ -10,15 +10,22 @@
 //   overlayData   { layout, office }: department borders, closed wings (drawn dark AND not walkable),
 //                 room labels, the elevator
 //   onZoomChange(zoom), onNearElevator(bool)   told when these change (rarely, not every frame)
-//   background    the colour behind the map (the office uses sky blue)
+//   background    the colour behind the map
+// v6: mapData  a Tiled map object to draw instead of /maps/office.json (the floor's stored layout)
+// v6: showFps  draw the FPS counter (the office toggles it with the F key)
+// v6: onAreaChange(area | null)  told when I step into or out of an area (meeting room, pod, …);
+//     inside a room (private / silent / stage) the rest of the map is dimmed with a dark film.
 // The camera now always follows me smoothly (maps bigger than the screen), and the map is drawn once
 // to a hidden canvas (renderMapToCanvas) so each frame is one picture copy: fast at any zoom.
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { loadOfficeMap, renderMapToCanvas, checkCollision } from './map';
-import { MOVE_SEND_HZ, EARSHOT_PX } from '@shared/constants.js';
+import { AVATAR_MIDDLE, DISCONNECT_PX, EARSHOT_PX, MOVE_SEND_HZ, RUN_SPEED_PX_PER_SEC, WALK_SPEED_PX_PER_SEC } from '@shared/constants.js';
+import { areaAt, isClosedArea } from './areas.js';
+import { buildWallGrid, isWallBetween } from './soundWalls.js';
 import {
   buildOverlay,
+  drawAreaFocus,
   drawAvatar,
   drawClosedWings,
   drawDepartmentBlocks,
@@ -26,13 +33,14 @@ import {
   drawNameTag,
   drawOverlayLabels,
   drawPulse,
+  drawRunLines,
   isBlockedByOverlay,
 } from './officeOverlay.js';
 
-// Walking speed in pixels per SECOND (not per frame).
-// Each frame we move speed × deltaTime, so a 60 Hz and a 144 Hz screen walk at the same speed.
-// Example: at 60 FPS one frame is about 0.0167 s, so one step is 180 × 0.0167 ≈ 3 px.
-const WALK_SPEED_PX_PER_SEC = 180;
+// Walking speed in pixels per SECOND (not per frame): WALK_SPEED_PX_PER_SEC (220), and twice that,
+// RUN_SPEED_PX_PER_SEC (440), while Shift is held (v6, both in shared/constants.js: the server's speed
+// check uses the same top speed). Each frame we move speed × deltaTime, so a 60 Hz and a 144 Hz screen
+// walk at the same speed. Example: at 60 FPS one frame is about 0.0167 s → 220 × 0.0167 ≈ 3.7 px.
 
 // The longest frame gap we accept, in seconds. If the window was in the background for
 // 2 seconds, the next frame's deltaTime would be 2 s and we'd jump 360 px in one step
@@ -51,7 +59,7 @@ const FOLLOW_CANVAS_HEIGHT_PX = 600;
 
 // Zoom: 1 = one map pixel per screen pixel. Clamped, so you can't zoom into a single tile or out
 // to a dot. Each + / − press multiplies or divides by ZOOM_STEP; each wheel notch by WHEEL_ZOOM_STEP.
-const MIN_ZOOM = 0.5;
+const MIN_ZOOM = 0.3; // v6: the whole 110 × 80 floor fits on a laptop screen at 30 %
 const MAX_ZOOM = 3;
 const ZOOM_STEP = 1.25;
 const WHEEL_ZOOM_STEP = 1.1;
@@ -132,6 +140,9 @@ export function WorldCanvas({
   overlayData,
   onZoomChange,
   onNearElevator,
+  onAreaChange,
+  mapData,
+  showFps = false,
   background = '#090d16',
 }) {
   const canvasRef = useRef(null);
@@ -156,6 +167,9 @@ export function WorldCanvas({
   // The map drawn once on a hidden canvas (see renderMapToCanvas in map.js).
   const mapCanvasRef = useRef(null);
 
+  // v6: one number per tile, 1 = wall (soundWalls.js), built once when the map loads.
+  const wallGridRef = useRef(null);
+
   // The desk pulse: { x, y, startedAt } or null.
   const pulseRef = useRef(null);
 
@@ -166,7 +180,9 @@ export function WorldCanvas({
   const othersRef = useRef(new Map());
 
   // Throttled position sending tracking
-  const lastSentRef = useRef({ time: 0, x: 0, y: 0, dir: 'down' });
+  // v6: starts at the spawn point, which the server already knows, so the first frame sends nothing
+  // (otherwise that redundant move would use up the server's one free jump after joining, moveCheck.js).
+  const lastSentRef = useRef({ time: 0, x: spawn?.x || 150, y: spawn?.y || 150, dir: 'down' });
 
   const keysRef = useRef({});
 
@@ -182,21 +198,27 @@ export function WorldCanvas({
   overlayRef.current = overlay;
 
   // Callbacks and looks in refs too, for the same reason (the loop reads the latest).
-  const looksRef = useRef({ avatarColor, selfName, onZoomChange, onNearElevator });
-  looksRef.current = { avatarColor, selfName, onZoomChange, onNearElevator };
+  const looksRef = useRef({ avatarColor, selfName, onZoomChange, onNearElevator, onAreaChange, showFps });
+  looksRef.current = { avatarColor, selfName, onZoomChange, onNearElevator, onAreaChange, showFps };
+
+  // v6: the id of the area I stood in last frame ('' = none yet), to call onAreaChange only on a change.
+  const areaIdRef = useRef('');
 
   // Populate initial players if provided
   useEffect(() => {
     addInitialPlayers(othersRef.current, initialPlayers, selfId);
   }, [initialPlayers, selfId]);
 
-  // Load map metadata on mount
+  // Load the map on mount. v6: `mapData` (a Tiled map object, e.g. the floor's stored layout) is used
+  // when given; if it can't be used, or none was given, the static /maps/office.json.
   useEffect(() => {
-    loadOfficeMap().then((loadedMap) => {
+    const load = mapData ? loadOfficeMap(mapData).then((loaded) => loaded || loadOfficeMap()) : loadOfficeMap();
+    load.then((loadedMap) => {
       mapCanvasRef.current = renderMapToCanvas(loadedMap);
+      wallGridRef.current = buildWallGrid(loadedMap); // v6: walls block sound (soundWalls.js)
       setMap(loadedMap);
     });
-  }, []);
+  }, [mapData]);
 
   // Fill mode: follow the parent's size (window resized, side panel opened or closed).
   useEffect(() => {
@@ -411,8 +433,12 @@ export function WorldCanvas({
         }
 
         // How far to walk this frame: speed (px per second) × seconds since the last frame.
-        // Example: 180 px/s × 0.0167 s ≈ 3 px at 60 FPS, or ≈ 1.25 px at 144 FPS (same speed).
-        const stepPx = playerRef.current.speed * deltaSec;
+        // Example: 220 px/s × 0.0167 s ≈ 3.7 px at 60 FPS, or ≈ 1.5 px at 144 FPS (same speed).
+        // v6: hold Shift to run at twice the speed (440 px/s).
+        const running = keys['shift'] === true && (dx !== 0 || dy !== 0);
+        playerRef.current.running = running;
+        const speed = running ? RUN_SPEED_PX_PER_SEC : playerRef.current.speed;
+        const stepPx = speed * deltaSec;
         const nextX = playerRef.current.x + dx * stepPx;
         const nextY = playerRef.current.y + dy * stepPx;
 
@@ -522,7 +548,21 @@ export function WorldCanvas({
           const info = people ? people[other.id] : null;
           drawAvatar(ctx, other.x, other.y, info?.color || '#6366f1', other.dir, false);
         });
+        if (playerRef.current.running) {
+          drawRunLines(ctx, playerRef.current.x, playerRef.current.y, playerRef.current.dir, currentTime);
+        }
         drawAvatar(ctx, playerRef.current.x, playerRef.current.y, looks.avatarColor, playerRef.current.dir, true);
+
+        // 7b. v6: which area am I in? Inside a room, dim everything else (a dark film with the room cut out).
+        const myArea = overlayNow ? areaAt(overlayNow.areas, playerRef.current.x, playerRef.current.y) : null;
+        if (isClosedArea(myArea)) {
+          drawAreaFocus(ctx, myArea, mapWidthPx, mapHeightPx);
+        }
+        const myAreaId = myArea ? myArea.id : null;
+        if (myAreaId !== areaIdRef.current) {
+          areaIdRef.current = myAreaId;
+          looks.onAreaChange?.(myArea);
+        }
 
         // 8. Debug overlay, world space part (the earshot ring around me)
         if (debug) {
@@ -547,6 +587,20 @@ export function WorldCanvas({
         const myHead = toScreen(playerRef.current.x + 16, playerRef.current.y - 2);
         drawNameTag(ctx, myHead.x, myHead.y, looks.selfName, selfDotColorRef?.current || DEFAULT_DOT_COLOR);
 
+        // v6: the office's FPS counter (F key): frames per second and how many people are drawn.
+        if (looks.showFps) {
+          const text = `FPS ${fps === null ? '…' : fps} · ${othersRef.current.size + 1} people`;
+          ctx.font = '600 12px ui-monospace, Menlo, Consolas, monospace';
+          const width = ctx.measureText(text).width + 20;
+          ctx.fillStyle = 'rgba(15, 27, 45, 0.8)';
+          ctx.fillRect(12, 12, width, 26);
+          ctx.fillStyle = fps !== null && fps < 50 ? '#ffb4b4' : '#9ff0c4';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(text, 22, 25.5);
+          ctx.textBaseline = 'alphabetic';
+        }
+        if (controllerRef?.current) controllerRef.current.lastFps = fps;
+
         if (debug) {
           ctx.fillStyle = '#38bdf8';
           ctx.font = '12px monospace';
@@ -557,14 +611,22 @@ export function WorldCanvas({
 
         // 10. Report positions upstream to audio mixer via callback
         if (typeof onFrame === 'function') {
+          // v6: blocked = a wall between us (open floor only; in a room the server's rules decide).
+          // Only people within DISCONNECT_PX are checked: nobody farther away can be a voice anyway.
+          const me = playerRef.current;
+          const iAmInTheOpen = !isClosedArea(myArea);
           onFrame({
-            self: { id: selfId, x: playerRef.current.x, y: playerRef.current.y },
-            others: Array.from(othersRef.current.values()).map((o) => ({
-              id: o.id,
-              x: o.x,
-              y: o.y,
-              blocked: false,
-            })),
+            self: { id: selfId, x: me.x, y: me.y },
+            others: Array.from(othersRef.current.values()).map((o) => {
+              let blocked = false;
+              if (iAmInTheOpen && wallGridRef.current && Math.hypot(o.x - me.x, o.y - me.y) <= DISCONNECT_PX) {
+                const theirArea = overlayNow ? areaAt(overlayNow.areas, o.x, o.y) : null;
+                if (!isClosedArea(theirArea)) {
+                  blocked = isWallBetween(wallGridRef.current, me.x + AVATAR_MIDDLE.x, me.y + AVATAR_MIDDLE.y, o.x + AVATAR_MIDDLE.x, o.y + AVATAR_MIDDLE.y);
+                }
+              }
+              return { id: o.id, x: o.x, y: o.y, blocked };
+            }),
           });
         }
       }

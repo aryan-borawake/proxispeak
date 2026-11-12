@@ -9,12 +9,21 @@ const FLIPPED_DIAGONALLY_FLAG   = 0x20000000;
 /**
  * Loads the map data and tileset images.
  * Fetches office.json and preloads all embedded tileset images.
+ * v6: `source` may also be a Tiled map object that is already loaded (the office gets its floor's
+ * stored layout from GET /api/rooms/:id). The tileset pictures always come from /maps/.
  */
-export async function loadOfficeMap(mapPath = '/maps/office.json') {
+export async function loadOfficeMap(source = '/maps/office.json') {
+  const mapPath = typeof source === 'string' ? source : 'the stored layout';
   try {
-    const response = await fetch(mapPath);
-    if (!response.ok) throw new Error(`Failed to load ${mapPath}`);
-    const mapData = await response.json();
+    let mapData;
+    if (typeof source === 'string') {
+      const response = await fetch(source);
+      if (!response.ok) throw new Error(`Failed to load ${source}`);
+      mapData = await response.json();
+    } else {
+      // A copy, because we attach the tileset pictures to it below.
+      mapData = { ...source, tilesets: (source.tilesets || []).map((tileset) => ({ ...tileset })) };
+    }
 
     // Preload all tileset images
     const tilesetPromises = (mapData.tilesets || []).map((tileset) => {

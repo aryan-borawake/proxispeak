@@ -1,6 +1,6 @@
 // client/src/app/AdminPage.jsx — Person 1
 // Screen 5 (#/admin): the admin's dashboard, in Infotact's dashboard style (left sidebar, white cards).
-//   Overview · Departments · Employees · Floors · Alerts · Enter office
+//   Overview · Departments · Employees · Floors · Layouts (v6) · Alerts · Enter office
 // Every action is a call to an /api/admin route; the SERVER checks the admin token each time
 // (requireAdmin), so hiding this page from employees is not what keeps it safe.
 // The data is loaded when the page opens, after every action, and every few seconds (online people).
@@ -11,6 +11,7 @@ import { Icon } from './icons.jsx';
 import { ROUTES, navigate } from './router.js';
 import { api, clearSession } from './session.js';
 import { AlertsSection, DepartmentsSection, EmployeesSection, FloorsSection, OverviewSection } from './AdminSections.jsx';
+import { LayoutsSection } from './AdminLayouts.jsx';
 
 // How often the page asks the server again (for the "online" column and new alerts).
 const ADMIN_REFRESH_MS = 5000;
@@ -20,6 +21,7 @@ const SECTIONS = [
   { id: 'departments', label: 'Departments', icon: <Icon.Rooms size={17} /> },
   { id: 'employees', label: 'Employees', icon: <Icon.Users size={17} /> },
   { id: 'floors', label: 'Floors', icon: <Icon.Building size={17} /> },
+  { id: 'layouts', label: 'Layouts', icon: <Icon.Map size={17} /> }, // v6: room persistence
   { id: 'alerts', label: 'Alerts', icon: <Icon.Bell size={17} /> },
 ];
 
@@ -142,6 +144,7 @@ export function AdminPage() {
         {data && section === 'employees' && <EmployeesSection data={data} act={act} />}
         {data && section === 'floors' && <FloorsSection data={data} layout={layout} act={act} />}
         {data && section === 'alerts' && <AlertsSection data={data} act={act} />}
+        {data && section === 'layouts' && <LayoutsSection data={data} act={act} />}
       </main>
     </div>
   );

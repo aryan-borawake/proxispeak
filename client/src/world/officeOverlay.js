@@ -8,8 +8,12 @@
 //   screen space — positions on the screen; text stays the same size at every zoom (labels).
 // WorldCanvas sets the canvas transform for world space, and resets it for screen space.
 //
+// v6: drawAreaFocus darkens everything outside the room I'm standing in.
+//
 // buildOverlay() does the slow work (which edges of which desks form a department's outline) ONCE
 // when the office changes, so each frame only draws ready-made lines.
+
+import { traceArea } from './areas.js';
 
 /** Darken a hex colour like '#2f80ed' and give it an alpha: hexToRgba('#2f80ed', 0.1). */
 export function hexToRgba(hex, alpha) {
@@ -35,27 +39,41 @@ export function buildOverlay({ layout, office }) {
   const desksById = new Map(layout.desks.map((desk) => [desk.id, desk]));
   const openWings = new Set(office ? office.openWings : layout.wings.map((wing) => wing.id));
 
+  // v6: a department's outline, from the TILES its desks cover. Every desk owns a tile-aligned
+  // rectangle (desk + chair). We mark those tiles, then every tile side whose neighbour is not marked
+  // is part of the outline. Works for any shape: pods with gaps between them, L-shapes, patches.
+  // Example: two facing desks (2 × 3 tiles each, one above the other) → one 2 × 6 outline.
+  const tileSize = layout.tileSize;
   const departments = (office ? office.departments : []).map((department) => {
     const desks = department.deskIds.map((id) => desksById.get(id)).filter(Boolean);
-    const cellKey = (wingId, row, col) => `${wingId}:${row}:${col}`;
-    const inBlock = new Set(desks.map((desk) => cellKey(desk.wingId, desk.row, desk.col)));
-    const edges = [];
+    const tiles = new Set();
     for (const desk of desks) {
       const { x, y, w, h } = desk.area;
-      if (!inBlock.has(cellKey(desk.wingId, desk.row - 1, desk.col))) edges.push([x, y, x + w, y]);
-      if (!inBlock.has(cellKey(desk.wingId, desk.row + 1, desk.col))) edges.push([x, y + h, x + w, y + h]);
-      if (!inBlock.has(cellKey(desk.wingId, desk.row, desk.col - 1))) edges.push([x, y, x, y + h]);
-      if (!inBlock.has(cellKey(desk.wingId, desk.row, desk.col + 1))) edges.push([x + w, y, x + w, y + h]);
+      for (let ty = y / tileSize; ty < (y + h) / tileSize; ty += 1) {
+        for (let tx = x / tileSize; tx < (x + w) / tileSize; tx += 1) tiles.add(`${tx},${ty}`);
+      }
+    }
+    const edges = [];
+    const cells = [];
+    for (const key of tiles) {
+      const [tx, ty] = key.split(',').map(Number);
+      const x = tx * tileSize;
+      const y = ty * tileSize;
+      cells.push({ x, y, w: tileSize, h: tileSize });
+      if (!tiles.has(`${tx},${ty - 1}`)) edges.push([x, y, x + tileSize, y]);
+      if (!tiles.has(`${tx},${ty + 1}`)) edges.push([x, y + tileSize, x + tileSize, y + tileSize]);
+      if (!tiles.has(`${tx - 1},${ty}`)) edges.push([x, y, x, y + tileSize]);
+      if (!tiles.has(`${tx + 1},${ty}`)) edges.push([x + tileSize, y, x + tileSize, y + tileSize]);
     }
     // The label goes on the top-left desk of the block.
-    const first = [...desks].sort((a, b) => a.area.y - b.area.y || a.area.x - b.area.x)[0];
+    const first = [...desks].sort((p, q) => p.area.y - q.area.y || p.area.x - q.area.x)[0];
     return {
       id: department.id,
       name: department.name,
       color: department.color,
-      areas: desks.map((desk) => desk.area),
+      areas: cells,
       edges,
-      labelAt: first ? { x: first.area.x + 6, y: first.area.y + 4 } : null,
+      labelAt: first ? { x: first.area.x + 2, y: first.area.y - 22 } : null,
     };
   });
 
@@ -68,6 +86,8 @@ export function buildOverlay({ layout, office }) {
     rooms: layout.rooms.filter((room) => !room.id.startsWith('wing-') && !room.id.includes('corridor') && room.id !== 'hallway'),
     elevator: layout.elevator,
     wings: layout.wings,
+    // v6: the rooms that change how you hear (meeting rooms, pods, focus rooms, the stage hall).
+    areas: layout.areas || [],
   };
 }
 
@@ -96,26 +116,74 @@ export function drawDepartmentBlocks(ctx, overlay) {
   }
 }
 
-/** World space: closed wings are darkened, with hatching, so they read as "not open yet". */
+/**
+ * World space, v6: a neighbourhood that is not open yet looks like a tidy "coming soon" area, not a dark
+ * block: a light dust sheet over the furniture, and a rope with brass posts around it. (You still can't
+ * walk in: the browser blocks it and the server refuses the move.)
+ */
 export function drawClosedWings(ctx, overlay) {
   for (const wing of overlay.closedWings) {
     const { x, y, w, h } = wing.outer;
-    ctx.fillStyle = 'rgba(15, 27, 45, 0.62)';
+    ctx.fillStyle = 'rgba(246, 240, 226, 0.78)';
     ctx.fillRect(x, y, w, h);
+    // Soft folds in the sheet: a few pale diagonal bands.
     ctx.save();
     ctx.beginPath();
     ctx.rect(x, y, w, h);
     ctx.clip();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
-    ctx.lineWidth = 10;
-    for (let offset = -h; offset < w; offset += 48) {
+    ctx.strokeStyle = 'rgba(205, 190, 160, 0.25)';
+    ctx.lineWidth = 18;
+    for (let offset = -h; offset < w; offset += 96) {
       ctx.beginPath();
       ctx.moveTo(x + offset, y + h);
       ctx.lineTo(x + offset + h, y);
       ctx.stroke();
     }
     ctx.restore();
+    // The rope: a dashed red line, brass posts every 3 tiles.
+    ctx.strokeStyle = '#a3243f';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([14, 6]);
+    ctx.strokeRect(x + 6, y + 6, w - 12, h - 12);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#c9a227';
+    const post = 96;
+    for (let px = x + 6; px <= x + w - 6; px += post) {
+      for (const py of [y + 6, y + h - 6]) dot(ctx, px, py, 5);
+    }
+    for (let py = y + 6 + post; py < y + h - 6; py += post) {
+      for (const px of [x + 6, x + w - 6]) dot(ctx, px, py, 5);
+    }
   }
+}
+
+function dot(ctx, x, y, r) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// How far beyond the map the dark film reaches, so the screen edges are dark too at any zoom.
+const FILM_MARGIN_PX = 4000;
+
+/**
+ * World space, v6: I'm inside a room (private, silent or stage). Everything else gets a dark transparent
+ * film, and the room a soft light outline, so it is obvious who can hear me. The film is one path:
+ * a huge rectangle with the room cut out of it ('evenodd' = the inner shape becomes a hole).
+ */
+export function drawAreaFocus(ctx, area, mapWidthPx, mapHeightPx) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(-FILM_MARGIN_PX, -FILM_MARGIN_PX, mapWidthPx + FILM_MARGIN_PX * 2, mapHeightPx + FILM_MARGIN_PX * 2);
+  traceArea(ctx, area);
+  ctx.fillStyle = 'rgba(8, 12, 24, 0.58)';
+  ctx.fill('evenodd');
+  ctx.beginPath();
+  traceArea(ctx, area);
+  ctx.strokeStyle = 'rgba(255, 244, 214, 0.85)';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** World space: the elevator, a steel panel with two doors. */
@@ -132,6 +200,27 @@ export function drawElevator(ctx, overlay, isNear) {
   ctx.beginPath();
   ctx.arc(x + w - 10, y + h / 2, 3, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/**
+ * World space, v6: while I run (Shift), three short speed lines trail behind me, flickering a little.
+ * Example: running right → lines to the left of the avatar.
+ */
+export function drawRunLines(ctx, x, y, dir, now) {
+  const back = { left: [1, 0], right: [-1, 0], up: [0, 1], down: [0, -1] }[dir] || [0, 0];
+  const flicker = Math.floor(now / 80) % 2;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  for (const offset of [-7, 0, 7]) {
+    const startX = x + 16 + back[0] * (14 + flicker * 2) + (back[1] !== 0 ? offset : 0);
+    const startY = y + 22 + back[1] * (14 + flicker * 2) + (back[0] !== 0 ? offset : 0);
+    const length = offset === 0 ? 12 : 8;
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.lineTo(startX + back[0] * length, startY + back[1] * length);
+    ctx.stroke();
+  }
 }
 
 /** World space: a ring that grows and fades around my desk for a few seconds ("this is your desk"). */
@@ -207,7 +296,7 @@ export function drawNameTag(ctx, screenX, screenY, name, statusColor) {
  */
 export function drawOverlayLabels(ctx, overlay, toScreen, zoom) {
   ctx.textBaseline = 'middle';
-  if (zoom >= 0.7) {
+  if (zoom >= 0.45) {
     ctx.font = '600 11px system-ui, -apple-system, Segoe UI, sans-serif';
     for (const room of overlay.rooms) {
       const point = toScreen(room.rect.x + room.rect.w / 2, room.rect.y + 14);
@@ -234,19 +323,25 @@ export function drawOverlayLabels(ctx, overlay, toScreen, zoom) {
 
   for (const wing of overlay.closedWings) {
     const centre = toScreen(wing.outer.x + wing.outer.w / 2, wing.outer.y + wing.outer.h / 2);
-    const title = `Wing ${wing.id}`;
-    const line = `Opens at tier ${wing.tier}`;
-    ctx.font = '700 15px system-ui, -apple-system, Segoe UI, sans-serif';
-    const width = Math.max(ctx.measureText(title).width, 120) + 40;
+    // Three short lines, scaled to fit inside the neighbourhood on screen (so two signs never overlap).
+    const lines = [wing.name || `Neighbourhood ${wing.id}`, 'Coming soon', `opens at tier ${wing.tier}`];
+    const fit = Math.min(1, (wing.outer.w * zoom * 0.9) / 190);
+    const big = Math.round(15 * fit);
+    const small = Math.round(12 * fit);
+    const width = 190 * fit;
+    const height = 68 * fit;
     ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
-    roundRect(ctx, centre.x - width / 2, centre.y - 28, width, 56, 12);
+    roundRect(ctx, centre.x - width / 2, centre.y - height / 2, width, height, 10 * fit);
     ctx.fill();
-    ctx.fillStyle = '#0f1b2d';
     ctx.textAlign = 'center';
-    ctx.fillText(title, centre.x, centre.y - 9);
-    ctx.font = '600 12px system-ui, -apple-system, Segoe UI, sans-serif';
-    ctx.fillStyle = '#0a7ea4';
-    ctx.fillText(line, centre.x, centre.y + 12);
+    ctx.fillStyle = '#0f1b2d';
+    ctx.font = `700 ${big}px system-ui, -apple-system, Segoe UI, sans-serif`;
+    ctx.fillText(lines[0], centre.x, centre.y - 18 * fit);
+    ctx.fillStyle = '#a3243f';
+    ctx.font = `700 ${small}px system-ui, -apple-system, Segoe UI, sans-serif`;
+    ctx.fillText(lines[1], centre.x, centre.y + 2 * fit);
+    ctx.font = `600 ${small}px system-ui, -apple-system, Segoe UI, sans-serif`;
+    ctx.fillText(lines[2], centre.x, centre.y + 19 * fit);
     ctx.textAlign = 'left';
   }
   ctx.textBaseline = 'alphabetic';

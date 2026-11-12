@@ -63,7 +63,7 @@ export function MiniMap({ layout, snapshot }) {
     canvas.width = MINIMAP_WIDTH_PX;
     canvas.height = Math.round(layout.heightPx * scale);
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#8fd3f4';
+    ctx.fillStyle = '#1b2030';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     if (picture) ctx.drawImage(picture, 0, 0, canvas.width, canvas.height);
 
@@ -95,19 +95,25 @@ export function MiniMap({ layout, snapshot }) {
         ctx.lineWidth = 1;
         ctx.strokeRect(x, y, w, h);
         ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.fillRect(x + 6, y + 6, 58, 18);
+        ctx.fillRect(x + 4, y + 4, 22, 18);
         ctx.fillStyle = '#0f1b2d';
         ctx.font = '700 11px system-ui, sans-serif';
-        ctx.fillText(`Wing ${wing.id}`, x + 35, y + 15.5);
+        ctx.fillText(wing.id, x + 15, y + 13.5);
       } else {
-        ctx.fillStyle = 'rgba(15, 27, 45, 0.7)';
+        // v6: a closed neighbourhood is a tidy 'coming soon' area (light cover), like in the office.
+        ctx.fillStyle = 'rgba(246, 240, 226, 0.85)';
         ctx.fillRect(x, y, w, h);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '700 13px system-ui, sans-serif';
-        ctx.fillText(`Wing ${wing.id}`, x + w / 2, y + h / 2 - 9);
-        ctx.font = '600 11px system-ui, sans-serif';
-        ctx.fillStyle = '#9fd8ea';
-        ctx.fillText(`Opens at tier ${wing.tier}`, x + w / 2, y + h / 2 + 9);
+        ctx.strokeStyle = '#a3243f';
+        ctx.setLineDash([5, 3]);
+        ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#0f1b2d';
+        ctx.font = '700 12px system-ui, sans-serif';
+        ctx.fillText(wing.id, x + w / 2, y + h / 2 - 18);
+        ctx.font = '600 10px system-ui, sans-serif';
+        ctx.fillStyle = '#a3243f';
+        ctx.fillText('Coming soon', x + w / 2, y + h / 2);
+        ctx.fillText(`tier ${wing.tier}`, x + w / 2, y + h / 2 + 14);
       }
     }
   }, [layout, snapshot, picture]);
