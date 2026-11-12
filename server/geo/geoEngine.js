@@ -3,10 +3,12 @@
 //   - upsertPositions(users): batch position writes in one bulkWrite trip
 //   - findNearby(userId, maxDistancePx): $near geospatial search in room excluding self
 //   - removeUser(userId): position removal when a user leaves
+//   - v6: usersInArea(area) and locateUsers(areas): $geoWithin, "who is inside which area" (areas.js)
 // Exact contracts: CONTRACTS.md (Section 6) and docs/briefs/module-2-geospatial.md.
 
 import { Position } from './models/Position.js';
 import { DEFAULT_ROOM, WORLD_MAX_PX } from '../../shared/constants.js';
+import { locateUsers, usersInArea } from './areas.js';
 
 /**
  * Creates a geospatial engine instance for a specific room.
@@ -186,6 +188,25 @@ export function createGeoEngine({ roomId = DEFAULT_ROOM } = {}) {
         console.error(`[geo] removeUser error for ${userId} in room ${roomId}:`, err.message);
         throw err;
       }
+    },
+
+    /**
+     * v6: who is inside this area of this room? One find with $geoWithin.
+     * @param {object} area - { id, box | polygon }
+     * @returns {Promise<string[]>}
+     */
+    usersInArea(area) {
+      return usersInArea(roomId, area);
+    },
+
+    /**
+     * v6: which area is everyone of this room in? ONE aggregate ($facet of $geoWithin) for all areas.
+     * The proximity tick calls it once per room per tick (never per move).
+     * @param {Array<object>} areas
+     * @returns {Promise<Map<string, { areaId: string, onPlatform: boolean }>>}
+     */
+    locateUsers(areas) {
+      return locateUsers(roomId, areas);
     },
   };
 }
