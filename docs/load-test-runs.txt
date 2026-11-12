@@ -1,0 +1,76 @@
+=== node scripts/load-test.js --bots=50 --seconds=30 --spread
+[load] 50 bots, 30 s, spread, floor-1, server http://localhost:3002
+[load] 26 directory people sign in for the bots; open neighbourhoods on floor-1: A, B
+[load] 50 bots joined; walking for 30 s (10 moves/s each, 220 px/s)
+[load] 5 s: peers per bot avg 0.4, max 3
+[load] 10 s: peers per bot avg 0.4, max 3
+[load] 15 s: peers per bot avg 0.5, max 3
+[load] 20 s: peers per bot avg 0.8, max 4
+[load] 25 s: peers per bot avg 0.5, max 2
+[load] 30 s: peers per bot avg 0.8, max 4
+[load] ---- result ----
+[load] mode spread, 50 bots, 30.2 s
+[load] moves sent per bot: 9.2/s; players:state received per bot: 9.3/s
+[load] peers per bot at the end: avg 0.8, max 4 (MAX_PEERS 8)
+[load] peers:update messages: 829 (27.4/s for all bots)
+[load] server errors: none
+[load] server tick (last 5 s window): avg 26.43 ms, p95 42.42 ms, max 42.42 ms, moved 50/tick, peers/user avg 0.8 max 4
+[load] RESULT {"mode":"spread","bots":50,"seconds":30,"statesPerBotPerS":9.3,"movesPerBotPerS":9.2,"peersAvg":0.8,"peersMax":4,"tick":{"windowS":5,"ticks":20,"avgMs":26.43,"p95Ms":42.42,"maxMs":42.42,"movedPerTick":50,"online":50,"peersPerUserAvg":0.8,"peersPerUserMax":4,"at":"2026-11-12T10:56:10.433Z"},"errors":{}}
+
+=== node scripts/load-test.js --bots=50 --seconds=30 --packed
+[load] 50 bots, 30 s, packed, floor-1, server http://localhost:3002
+[load] 26 directory people sign in for the bots; open neighbourhoods on floor-1: A, B
+[load] 50 bots joined; walking for 30 s (10 moves/s each, 220 px/s)
+[load] 5 s: peers per bot avg 5.1, max 8
+[load] 10 s: peers per bot avg 5.6, max 8
+[load] 15 s: peers per bot avg 5.8, max 8
+[load] 20 s: peers per bot avg 6.2, max 8
+[load] 25 s: peers per bot avg 6.4, max 8
+[load] 30 s: peers per bot avg 5.8, max 8
+[load] ---- result ----
+[load] mode packed, 50 bots, 30.3 s
+[load] moves sent per bot: 9.2/s; players:state received per bot: 9.2/s
+[load] peers per bot at the end: avg 5.8, max 8 (MAX_PEERS 8)
+[load] peers:update messages: 5435 (179.7/s for all bots)
+[load] server errors: none
+[load] server tick (last 5 s window): avg 35.6 ms, p95 42.84 ms, max 42.84 ms, moved 50/tick, peers/user avg 5.08 max 8
+[load] RESULT {"mode":"packed","bots":50,"seconds":30,"statesPerBotPerS":9.2,"movesPerBotPerS":9.2,"peersAvg":5.8,"peersMax":8,"tick":{"windowS":5,"ticks":19,"avgMs":35.6,"p95Ms":42.84,"maxMs":42.84,"movedPerTick":50,"online":50,"peersPerUserAvg":5.08,"peersPerUserMax":8,"at":"2026-11-12T10:56:45.515Z"},"errors":{}}
+
+=== server log during both runs (grep '[tick] stats')
+[tick] stats 5s: 2 ticks, avg 38.2 ms, p95 45.1 ms, max 45.1 ms, moved 50.0/tick, online 50, peers/user avg 0.4 max 2
+[tick] stats 5s: 20 ticks, avg 28.6 ms, p95 46.3 ms, max 46.3 ms, moved 50.0/tick, online 50, peers/user avg 0.1 max 1
+[tick] stats 5s: 17 ticks, avg 27.1 ms, p95 37.7 ms, max 37.7 ms, moved 48.7/tick, online 50, peers/user avg 0.5 max 3
+[tick] stats 5s: 19 ticks, avg 25.9 ms, p95 35.4 ms, max 35.4 ms, moved 49.9/tick, online 50, peers/user avg 0.4 max 3
+[tick] stats 5s: 19 ticks, avg 24.8 ms, p95 30.6 ms, max 30.6 ms, moved 50.0/tick, online 50, peers/user avg 0.5 max 3
+[tick] stats 5s: 20 ticks, avg 27.6 ms, p95 41.6 ms, max 41.6 ms, moved 50.0/tick, online 50, peers/user avg 0.6 max 3
+[tick] stats 5s: 19 ticks, avg 26.1 ms, p95 31.7 ms, max 31.7 ms, moved 49.9/tick, online 50, peers/user avg 0.8 max 3
+[tick] stats 5s: 20 ticks, avg 26.4 ms, p95 42.4 ms, max 42.4 ms, moved 50.0/tick, online 50, peers/user avg 0.8 max 4
+[tick] stats 5s: 2 ticks, avg 41.4 ms, p95 47.7 ms, max 47.7 ms, moved 47.5/tick, online 50, peers/user avg 5.1 max 8
+[tick] stats 5s: 20 ticks, avg 43.0 ms, p95 167.7 ms, max 167.7 ms, moved 50.0/tick, online 50, peers/user avg 5.9 max 8
+[tick] stats 5s: 20 ticks, avg 49.3 ms, p95 141.0 ms, max 141.0 ms, moved 50.0/tick, online 50, peers/user avg 5.5 max 8
+[tick] stats 5s: 19 ticks, avg 42.1 ms, p95 65.4 ms, max 65.4 ms, moved 50.0/tick, online 50, peers/user avg 5.8 max 8
+[tick] stats 5s: 20 ticks, avg 39.2 ms, p95 75.9 ms, max 75.9 ms, moved 50.0/tick, online 50, peers/user avg 5.5 max 8
+[tick] stats 5s: 19 ticks, avg 35.6 ms, p95 42.8 ms, max 42.8 ms, moved 50.0/tick, online 50, peers/user avg 5.1 max 8
+
+=== packed run during the FPS screenshot (dev server, browser on the floor too)
+[load] 50 bots, 40 s, packed, floor-1, server http://localhost:3001
+[load] 26 directory people sign in for the bots; open neighbourhoods on floor-1: A, B
+[load] 50 bots joined; walking for 40 s (10 moves/s each, 220 px/s)
+[load] 5 s: peers per bot avg 5.6, max 8
+[load] 10 s: peers per bot avg 6.0, max 8
+[load] 15 s: peers per bot avg 5.8, max 8
+[load] 20 s: peers per bot avg 5.6, max 8
+[load] 25 s: peers per bot avg 6.0, max 8
+[load] 30 s: peers per bot avg 6.4, max 8
+[load] 35 s: peers per bot avg 5.5, max 8
+[load] 40 s: peers per bot avg 5.4, max 8
+[load] ---- result ----
+[load] mode packed, 50 bots, 40.1 s
+[load] moves sent per bot: 9.3/s; players:state received per bot: 9.3/s
+[load] peers per bot at the end: avg 5.4, max 8 (MAX_PEERS 8)
+[load] peers:update messages: 7216 (180.0/s for all bots)
+[load] server errors: none
+[load] server tick (last 5 s window): avg 49.61 ms, p95 125.38 ms, max 125.38 ms, moved 50/tick, peers/user avg 5.58 max 8
+[load] RESULT {"mode":"packed","bots":50,"seconds":40,"statesPerBotPerS":9.3,"movesPerBotPerS":9.3,"peersAvg":5.4,"peersMax":8,"tick":{"windowS":5,"ticks":19,"avgMs":49.61,"p95Ms":125.38,"maxMs":125.38,"movedPerTick":50,"online":53,"peersPerUserAvg":5.58,"peersPerUserMax":8,"at":"2026-11-12T11:02:20.935Z"},"errors":{}}
+
+FPS samples (1 per second): 138, 140, 139, 135, 135, 139, 138, 140
