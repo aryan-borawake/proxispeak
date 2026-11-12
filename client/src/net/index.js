@@ -460,8 +460,37 @@ function leave() {
   socket.disconnect();
 }
 
+// ---------------------------------------------------------------- v6: area chat, layouts
+
+/**
+ * Post a message in the chat of the area I'm standing in (EVENTS.CHAT_SEND { text }). The server
+ * works out the area and sends EVENTS.CHAT_MESSAGE to everyone standing in it (me too).
+ * @param {string} text
+ */
+function sendChat(text) {
+  if (!isJoined()) {
+    return;
+  }
+  socket.emit(EVENTS.CHAT_SEND, { text });
+}
+
+/** Listen for EVENTS.CHAT_MESSAGE: { areaId, areaName, from: { id, name }, text, t }. Returns an unsubscribe function. */
+function onChatMessage(cb) {
+  return listen(EVENTS.CHAT_MESSAGE, cb);
+}
+
+/** Listen for EVENTS.LAYOUT_UPDATE: { floorId, version } (the admin uploaded a new layout). Returns an unsubscribe function. */
+function onLayoutUpdate(cb) {
+  return listen(EVENTS.LAYOUT_UPDATE, cb);
+}
+
+/** Listen for EVENTS.SERVER_ERROR: { code, message } (e.g. BAD_CHAT). Returns an unsubscribe function. */
+function onServerError(cb) {
+  return listen(EVENTS.SERVER_ERROR, cb);
+}
+
 // The one object every module imports: import { net } from '../net/index.js';
-// The functions in CONTRACTS.md, section 7 (v5 adds sendStatus … leave at the end).
+// The functions in CONTRACTS.md, section 7 (v5 adds sendStatus … leave; v6 adds sendChat … onServerError).
 export const net = {
   connect,
   sendMove,
@@ -478,6 +507,10 @@ export const net = {
   changeFloor,
   onFloorChanged,
   leave,
+  sendChat,
+  onChatMessage,
+  onLayoutUpdate,
+  onServerError,
 };
 
 // The server's address, for the product pages' REST calls (sign-in, admin).
