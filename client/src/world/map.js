@@ -150,16 +150,47 @@ export function drawMap(ctx, map, camera) {
 }
 
 /**
+ * Draw the whole map ONCE onto its own hidden ("offscreen") canvas, the size of the map.
+ * Why? Drawing 85 × 53 tiles × 9 layers is about 40 000 drawImage calls. Doing that 60 times a
+ * second would be far too slow. The tiles never change, so we draw them once here, and every frame
+ * just copies this one picture onto the screen (one drawImage), shifted and zoomed by the camera.
+ * (v5, added by Person 1 for the office's camera and zoom.)
+ *
+ * @param {object} map - from loadOfficeMap()
+ * @returns {HTMLCanvasElement | null}
+ */
+export function renderMapToCanvas(map) {
+  if (!map) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = map.width * map.tileSize;
+  canvas.height = map.height * map.tileSize;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  drawMap(ctx, map, { x: 0, y: 0 });
+  return canvas;
+}
+
+/**
  * Checks if a target coordinate collides with walls or furniture objects.
+ * v5: checks EVERY layer called "collision" or "walls" (the HQ map has both: "Walls" for the
+ * drawn walls and an invisible "collision" layer that blocks the outside area).
  */
 export function checkCollision(x, y, map, avatarSize = 24) {
   if (!map || !map.layers) return false;
 
-  const collisionLayer = map.layers.find((l) => {
+  const collisionLayers = map.layers.filter((l) => {
     const name = (l.name || '').toLowerCase();
     return name === 'collision' || name === 'walls';
   });
-  if (!collisionLayer) return false;
+  if (collisionLayers.length === 0) return false;
+  for (const collisionLayer of collisionLayers) {
+    if (layerBlocks(collisionLayer, x, y, map, avatarSize)) return true;
+  }
+  return false;
+}
+
+/** Does this one collision layer block an avatar at (x, y)? (The original check, per layer.) */
+function layerBlocks(collisionLayer, x, y, map, avatarSize) {
 
   const tileSize = map.tileSize;
 

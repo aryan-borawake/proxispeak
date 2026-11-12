@@ -132,3 +132,19 @@ In the World Lab:
 - Toggle **Debug Audio Circle** to see the 100 px spatial hearing boundary.
 - Toggle bot controls (**1 bot**, **3 bots**, **5 bots**, or **50 bots stress test**) to verify smooth 60 FPS multi-user rendering and wall collisions.
 
+
+## 6. v5 changes for the Infotact office (added by Person 1)
+
+- **The map is now generated.** `client/public/maps/office-base.json` is your original 35 × 25 office.
+  `office.json` is built from it by `node server/scripts/build-office-map.js` (85 × 53 tiles: your office
+  in the top-left, plus a corridor, an elevator and four 25-desk wings in the same tileset). To change
+  your office: edit `office.tmx` in Tiled, **export to `office-base.json`**, then run the script.
+  Exporting straight to `office.json` would remove the wings.
+- `map.js`: `renderMapToCanvas(map)` draws the map once to a hidden canvas (60 FPS on the big map);
+  `checkCollision` checks every layer called `collision` or `walls` (the new invisible `collision`
+  layer blocks the outside area).
+- `WorldCanvas.jsx`: new optional props (fill, zoom, camera controller, colours, name tags with status
+  dots, the office overlay). Without them it behaves as before, so the World Lab works unchanged; the
+  bigger map simply uses the follow camera there.
+- `officeOverlay.js` (new): department borders, closed wings, room labels, elevator, desk pulse,
+  avatars and name tags.
