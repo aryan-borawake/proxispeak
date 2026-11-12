@@ -28,6 +28,12 @@ services:
       # The client's address, e.g. https://proxispeak-client.onrender.com (no "/" at the end).
       - key: CLIENT_ORIGIN
         sync: false
+      # v5: the key that signs sign-in tokens (any long random text). Set it by hand in the dashboard.
+      - key: AUTH_SECRET
+        sync: false
+      # v5: the password of the Admin sign-in tab. Set it by hand in the dashboard.
+      - key: ADMIN_PASSWORD
+        sync: false
 
   # A static site is written as type "web" with runtime "static" in a Blueprint.
   - type: web
