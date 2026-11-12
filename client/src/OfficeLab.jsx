@@ -14,11 +14,14 @@
 // So the microphone, the mixer and the rtc manager are created ONLY when "Join the office" is
 // clicked, never at mount time (and nothing is made in useMemo that a cleanup destroys).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+// v5: the mixer / microphone / rtc manager wiring now lives in app/useVoiceSession.js, shared with
+// the product's office page, so both pages use exactly the same code.
+
+import { useEffect, useRef, useState } from 'react';
 import { net } from './net/index.js';
-import { getMicStream, createRtcManager } from './rtc/index.js';
 import { WorldCanvas } from './world/index.js';
-import { createMixer, AudioControls } from './audio/index.js';
+import { AudioControls } from './audio/index.js';
+import { useVoiceSession } from './app/useVoiceSession.js';
 
 // How often the side panel is refreshed. Twice a second is enough for people to read it.
 // (Not every frame: React redrawing the page 60 times a second would slow the game down.)
@@ -74,11 +77,11 @@ export function OfficeLab() {
   const [debug, setDebug] = useState(true); // earshot circle + FPS counter, on by default
   const [panel, setPanel] = useState(null); // what the side panel shows (refreshed twice a second)
 
+  // --- The voice wiring (mixer, microphone, rtc manager, onFrame), shared with the office page ---
+  const voice = useVoiceSession();
+  const { mixerRef, rtcRef, micRef, frameRef, onFrame } = voice;
+
   // --- Refs: boxes that hold a value WITHOUT redrawing the page when it changes ---
-  const mixerRef = useRef(null); // Person 4's mixer (made on the click)
-  const rtcRef = useRef(null); // my rtc manager (made on the click)
-  const micRef = useRef(null); // the microphone stream, so we can stop it when leaving
-  const frameRef = useRef(null); // the latest frame from WorldCanvas (60 times a second)
   const namesRef = useRef({}); // id → name, so the panel can show names instead of ids
   const myNameRef = useRef(''); // the name I joined with (the re-join listener reads it)
 
@@ -111,16 +114,13 @@ export function OfficeLab() {
   //          starts at (412, 300) and the server hears "c3 is at (412, 300)".
   useEffect(() => {
     const stopRejoin = net.onRejoin(({ selfId, spawn, players }) => {
-      const mixer = mixerRef.current;
-      const stream = micRef.current;
       // We never joined on this page: nothing to rebuild.
-      if (!rtcRef.current || !mixer || !stream) {
+      if (!rtcRef.current || !mixerRef.current || !micRef.current) {
         return;
       }
       console.log(`[office] re-joined as ${selfId}; rebuilding voice connections and the world`);
 
-      rtcRef.current.closeAll();
-      rtcRef.current = startRtcManager(selfId, stream, mixer);
+      voice.startRtc(selfId); // closes the old manager first
 
       // Where I was in the last frame, or the server's spawn if the world never drew a frame.
       const lastSelf = frameRef.current?.self;
@@ -138,37 +138,10 @@ export function OfficeLab() {
     return stopRejoin;
   }, []);
 
-  // onFrame: WorldCanvas calls this every animation frame with
-  // { self: { id, x, y }, others: [{ id, x, y, blocked }] }.
-  //
-  // It must be a STABLE function (the same function on every redraw), because WorldCanvas
-  // restarts its whole game loop whenever onFrame changes. useCallback with an empty list []
-  // creates it once. It reads the mixer from a ref, so it never needs to change.
-  const onFrame = useCallback((frame) => {
-    frameRef.current = frame; // remembered for the side panel
-    if (mixerRef.current) {
-      mixerRef.current.update(frame); // volume and left/right for every voice
-    }
-  }, []);
-
-  // When the page goes away: hang up on everyone, turn the microphone off, and take every
-  // voice out of the mixer. (The mixer has no "close" function, so removePeer is all we can do;
-  // closeAll already calls onPeerClosed → removePeer for each connection, this is a safety net.)
-  useEffect(() => {
-    return () => {
-      if (rtcRef.current) {
-        rtcRef.current.closeAll();
-        rtcRef.current = null;
-      }
-      stopMicrophone(micRef);
-      if (mixerRef.current) {
-        for (const { id } of mixerRef.current.getPeerDiagnostics()) {
-          mixerRef.current.removePeer(id);
-        }
-        mixerRef.current = null;
-      }
-    };
-  }, []);
+  // onFrame (from useVoiceSession): WorldCanvas calls it every animation frame with
+  // { self: { id, x, y }, others: [{ id, x, y, blocked }] }; it remembers the frame for the side
+  // panel and updates the mixer. When the page goes away, useVoiceSession hangs up on everyone,
+  // turns the microphone off and takes every voice out of the mixer.
 
   // While joined, stop the arrow keys from scrolling the page, so walking doesn't make the
   // page jump around. (WorldCanvas still gets the key: preventDefault only cancels the scroll.)
@@ -196,31 +169,16 @@ export function OfficeLab() {
     setStatus('joining');
     setErrorText('');
 
-    // 1. The mixer, and resume() it straight away. Browsers keep sound switched off until the
-    //    user clicks something; this click is our permission to play sound.
-    //    (If an earlier try failed, reuse that mixer instead of making a second one.)
-    try {
-      if (!mixerRef.current) {
-        mixerRef.current = createMixer();
-      }
-      await mixerRef.current.resume();
-    } catch (error) {
-      setErrorText(`[audio] Could not start sound: ${error.message}`);
-      setStatus('idle');
-      return;
-    }
-    const mixer = mixerRef.current;
-
-    // 2. The microphone. If it's blocked we stop here, and the message says what to do.
+    // 1–2. The mixer (resumed: this click is our permission to play sound) and the microphone.
+    //      If either fails we stop here, and the message says what to do.
     let stream;
     try {
-      stream = await getMicStream();
+      stream = await voice.startAudio();
     } catch (error) {
       setErrorText(error.message);
       setStatus('idle');
       return;
     }
-    micRef.current = stream;
 
     // 3. Join the office through the server.
     let result;
@@ -228,7 +186,7 @@ export function OfficeLab() {
       result = await net.connect({ name: name.trim() });
     } catch (error) {
       // e.g. "[net] could not connect to http://localhost:3001 … Is the server running?"
-      stopMicrophone(micRef);
+      voice.stopAll();
       setErrorText(error.message);
       setStatus('idle');
       return;
@@ -237,7 +195,7 @@ export function OfficeLab() {
     // 4. The rtc manager, IMMEDIATELY (no other `await` before it). The first EVENTS.PEERS_UPDATE,
     //    and maybe an offer, can arrive very soon after joining; the manager must already be
     //    listening, or we miss it and never connect to that person.
-    rtcRef.current = startRtcManager(result.selfId, stream, mixer);
+    voice.startRtc(result.selfId);
 
     // 5. Remember everyone already in the room, then show the world.
     for (const player of result.players) {
@@ -253,9 +211,7 @@ export function OfficeLab() {
   // Mute: turn my microphone track off (nobody hears me) and update the button.
   function handleToggleMute() {
     const nextMuted = !muted;
-    if (rtcRef.current) {
-      rtcRef.current.setMuted(nextMuted);
-    }
+    voice.setMuted(nextMuted);
     setMuted(nextMuted);
   }
 
@@ -308,21 +264,6 @@ export function OfficeLab() {
       )}
     </section>
   );
-}
-
-/**
- * Make an rtc manager whose voices go into the mixer, never into an <audio> element.
- * Used by Join, and again after a re-join (new selfId, same microphone, same mixer).
- */
-function startRtcManager(selfId, micStream, mixer) {
-  return createRtcManager({
-    net,
-    selfId,
-    micStream,
-    onRemoteStream: (id, remoteStream) => mixer.addPeer(id, remoteStream),
-    onPeerClosed: (id) => mixer.removePeer(id),
-    onPeerMode: (id, mode) => mixer.setMode(id, mode),
-  });
 }
 
 /**
@@ -433,15 +374,4 @@ function PanBar({ pan }) {
       />
     </div>
   );
-}
-
-/** Turn the microphone off (the browser's red mic icon goes away) and forget the stream. */
-function stopMicrophone(micRef) {
-  if (!micRef.current) {
-    return;
-  }
-  for (const track of micRef.current.getTracks()) {
-    track.stop();
-  }
-  micRef.current = null;
 }

@@ -40,6 +40,18 @@ let pendingJoin = null;
 // was in the office, so after a reconnect we join again with the same name.
 let joinedName = null;
 
+// v5: what EVENTS.JOIN sent, so a reconnect sends the same thing again: { name } for labs, or
+// { token, avatarColor } for a signed-in employee. null until the first join works.
+let joinPayload = null;
+
+// v5: the room (floor) I am in now and my status, so a reconnect puts me back on the same floor
+// with the same status (the server would otherwise start me on my desk's floor, available).
+let currentRoomId = null;
+let currentStatus = null;
+
+// v5: everyone who wants to know about a floor change (net.onFloorChanged).
+const floorChangedCallbacks = new Set();
+
 // Everyone who wants to know about a re-join (net.onRejoin). A Set holds each callback once.
 const rejoinCallbacks = new Set();
 
@@ -99,12 +111,14 @@ function rejoin() {
     stopWaiting();
     selfId = payload.selfId;
     joinResult = payload;
+    currentRoomId = payload.roomId;
     console.log(`[net] re-joined ${payload.roomId} as ${joinedName} (${payload.selfId})`);
 
     // Tell everyone. One callback that throws must not stop the others.
+    // v5: signed-in joins also carry `profile` and `office`; they are passed on as well.
     for (const cb of rejoinCallbacks) {
       try {
-        cb({ selfId: payload.selfId, roomId: payload.roomId, spawn: payload.spawn, players: payload.players });
+        cb({ ...payload, selfId: payload.selfId, roomId: payload.roomId, spawn: payload.spawn, players: payload.players });
       } catch (error) {
         console.warn('[net] an onRejoin callback threw:', error);
       }
@@ -120,8 +134,38 @@ function rejoin() {
   cancelRejoin = stopWaiting;
   // Listen first, then send, so a very fast reply can't be missed.
   socket.on(EVENTS.WORLD_INIT, handleWorldInit);
-  socket.emit(EVENTS.JOIN, { name: joinedName });
+  socket.emit(EVENTS.JOIN, rejoinPayload());
 }
+
+/**
+ * v5: what to send when joining again after a reconnect: the first join's payload, and for a
+ * signed-in employee also the floor I was on and my status, so nothing changes for me.
+ * Example: { token: 'eyJ…', avatarColor: '#2f80ed', floorId: 'floor-2', status: 'busy' }
+ */
+function rejoinPayload() {
+  if (!joinPayload || !('token' in joinPayload)) {
+    return { name: joinedName };
+  }
+  const payload = { ...joinPayload };
+  if (currentRoomId) payload.floorId = currentRoomId;
+  if (currentStatus) payload.status = currentStatus;
+  return payload;
+}
+
+// v5: the server moved me to another floor (my FLOOR_CHANGE, or the admin moved my department).
+// It is a brand-new world: remember it, then tell every onFloorChanged callback.
+socket.on(EVENTS.FLOOR_CHANGED, (payload) => {
+  joinResult = payload;
+  currentRoomId = payload.roomId;
+  console.log(`[net] now on ${payload.roomId}`);
+  for (const cb of floorChangedCallbacks) {
+    try {
+      cb(payload);
+    } catch (error) {
+      console.warn('[net] an onFloorChanged callback threw:', error);
+    }
+  }
+});
 
 // Show every server error in the console (for example BAD_MOVE), so mistakes are visible.
 socket.on(EVENTS.SERVER_ERROR, ({ code, message }) => {
@@ -135,11 +179,18 @@ socket.on(EVENTS.SERVER_ERROR, ({ code, message }) => {
  * Example: const { selfId, spawn, players } = await net.connect({ name: 'Riya' });
  *          // selfId: 'kX9a2bQ…', spawn: { x: 200, y: 200 }, players: [ …people already here ]
  *
- * @param {{ name: string }} options
+ * v5: a signed-in employee joins with their token instead of a name:
+ *   await net.connect({ token, avatarColor: '#2f80ed' })
+ * The server then takes the name from the directory and puts them on their floor; the answer also
+ * holds `profile` (who I am, my desk) and `office` (the floor: tier, open wings, departments).
+ *
+ * @param {{ name?: string, token?: string, avatarColor?: string, floorId?: string, status?: string }} options
  * @returns {Promise<{ selfId: string, roomId: string, spawn: { x: number, y: number },
  *   players: Array<{ id: string, name: string, x: number, y: number, dir: string }> }>}
  */
-function connect({ name }) {
+function connect({ name, token, avatarColor, floorId, status }) {
+  // What JOIN sends: a token join, or the old name join (labs and tests).
+  const joinMessage = token ? { token, avatarColor, floorId, status } : { name };
   // 1. Already joined? Give back the same answer; don't join a second time.
   if (joinResult !== null) {
     return Promise.resolve(joinResult);
@@ -165,7 +216,7 @@ function connect({ name }) {
 
     // Once connected, say who we are.
     function sendJoin() {
-      socket.emit(EVENTS.JOIN, { name });
+      socket.emit(EVENTS.JOIN, joinMessage);
     }
 
     // Success: the server replied with WORLD_INIT { selfId, roomId, spawn, players }.
@@ -174,8 +225,12 @@ function connect({ name }) {
       selfId = payload.selfId;
       joinResult = payload;
       pendingJoin = null;
-      joinedName = name; // from now on, a reconnect joins again with this name
-      console.log(`[net] joined ${payload.roomId} as ${name} (${payload.selfId})`);
+      // From now on, a reconnect joins again with this name (or token).
+      joinedName = token ? payload.profile?.name || 'signed-in employee' : name;
+      joinPayload = token ? { token, avatarColor } : { name };
+      currentRoomId = payload.roomId;
+      currentStatus = status || null;
+      console.log(`[net] joined ${payload.roomId} as ${joinedName} (${payload.selfId})`);
       resolve(payload);
     }
 
@@ -338,8 +393,75 @@ function sendSignal({ to, data }) {
   socket.emit(EVENTS.SIGNAL, { to, data });
 }
 
+// ---------------------------------------------------------------- v5: the Infotact office
+
+/**
+ * Tell everyone in my room my new status (EVENTS.PLAYER_STATUS { status }); one of STATUSES.
+ * Do Not Disturb makes the server hang up all my voice connections.
+ * @param {'available' | 'busy' | 'dnd'} status
+ */
+function sendStatus(status) {
+  currentStatus = status;
+  if (!isJoined()) {
+    return;
+  }
+  socket.emit(EVENTS.PLAYER_STATUS, { status });
+}
+
+/** Listen for EVENTS.PLAYER_STATUS: { id, status }. Returns an unsubscribe function. */
+function onPlayerStatus(cb) {
+  return listen(EVENTS.PLAYER_STATUS, cb);
+}
+
+/** Listen for EVENTS.OFFICE_UPDATE: the floor's new snapshot. Returns an unsubscribe function. */
+function onOfficeUpdate(cb) {
+  return listen(EVENTS.OFFICE_UPDATE, cb);
+}
+
+/**
+ * Ask to go to another floor (EVENTS.FLOOR_CHANGE { floorId }). The answer arrives as
+ * EVENTS.FLOOR_CHANGED, given to every net.onFloorChanged callback.
+ * @param {string} floorId - e.g. 'floor-2'
+ */
+function changeFloor(floorId) {
+  if (!isJoined()) {
+    return;
+  }
+  socket.emit(EVENTS.FLOOR_CHANGE, { floorId });
+}
+
+/**
+ * Be told when I am on a new floor: cb gets the WORLD_INIT-shaped payload of the new floor
+ * ({ selfId, roomId, spawn, players, profile, office }). My selfId stays the same, but every other
+ * person is different, so the page rebuilds the rtc manager and remounts the world.
+ * @returns {() => void} unsubscribe function
+ */
+function onFloorChanged(cb) {
+  floorChangedCallbacks.add(cb);
+  return () => {
+    floorChangedCallbacks.delete(cb);
+  };
+}
+
+/**
+ * Leave the office on purpose ("Leave" button, sign out). Hangs up and forgets the join, so a
+ * later net.connect() joins from scratch, and a reconnect does NOT join again by itself.
+ */
+function leave() {
+  joinedName = null;
+  joinPayload = null;
+  currentRoomId = null;
+  currentStatus = null;
+  joinResult = null;
+  selfId = null;
+  if (cancelRejoin !== null) {
+    cancelRejoin();
+  }
+  socket.disconnect();
+}
+
 // The one object every module imports: import { net } from '../net/index.js';
-// Exactly the functions in CONTRACTS.md, section 7, and nothing else.
+// The functions in CONTRACTS.md, section 7 (v5 adds sendStatus … leave at the end).
 export const net = {
   connect,
   sendMove,
@@ -350,4 +472,13 @@ export const net = {
   onSignal,
   onRejoin,
   sendSignal,
+  sendStatus,
+  onPlayerStatus,
+  onOfficeUpdate,
+  changeFloor,
+  onFloorChanged,
+  leave,
 };
+
+// The server's address, for the product pages' REST calls (sign-in, admin).
+export { SERVER_URL };
