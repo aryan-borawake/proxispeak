@@ -30,7 +30,7 @@ async function main() {
       full.width = map.width * map.tileSize;
       full.height = map.height * map.tileSize;
       const ctx = full.getContext('2d');
-      ctx.fillStyle = '#8fd3f4';
+      ctx.fillStyle = '#1b2030';
       ctx.fillRect(0, 0, full.width, full.height);
       world.drawMap(ctx, map, { x: 0, y: 0 });
       const scale = ${PREVIEW_WIDTH_PX} / full.width;
