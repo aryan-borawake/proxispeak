@@ -6,15 +6,17 @@
 
 export const EVENTS = Object.freeze({
   // browser → server, once.
-  // Payload: { name }
+  // Payload: { name }   (labs and tests: joins DEFAULT_ROOM)
+  //      or  { token, avatarColor?, floorId?, status? }   (v5: a signed-in employee; joins a floor room)
   JOIN: 'player:join',
 
   // server → that browser only, once, as the reply to JOIN.
-  // Payload: { selfId, roomId, spawn: { x, y }, players: [{ id, name, x, y, dir }] }
+  // Payload: { selfId, roomId, spawn: { x, y }, players: [{ id, name, x, y, dir, ...extra }] }
+  // v5, token joins only, extra fields: profile (who I am, my desk) and office (the floor snapshot).
   WORLD_INIT: 'world:init',
 
   // server → everyone else in the room, when someone joins.
-  // Payload: { id, name, x, y, dir }
+  // Payload: { id, name, x, y, dir }   (v5 adds: status, avatarColor, role, department)
   PLAYER_JOINED: 'player:joined',
 
   // browser → server, at most MOVE_SEND_HZ (10) times a second, only when the player moved.
@@ -43,4 +45,22 @@ export const EVENTS = Object.freeze({
   // server → one browser, when that browser sent bad input.
   // Payload: { code, message }
   SERVER_ERROR: 'server:error',
+
+  // ---- v5: the Infotact office ----
+
+  // browser → server: "my status is now ...".   Payload: { status }   (one of STATUSES)
+  // server → everyone in the room:              Payload: { id, status }
+  PLAYER_STATUS: 'player:status',
+
+  // server → everyone on one floor, when the floor changed: a wing opened, a department was
+  // added or resized, desks were reassigned.
+  // Payload: { floorId, tier, openWings: ['A', ...], departments: [{ id, name, color, deskIds }], hotDeskIds }
+  OFFICE_UPDATE: 'office:update',
+
+  // browser → server: "take me to this floor" (elevator or Floors button).   Payload: { floorId }
+  FLOOR_CHANGE: 'floor:change',
+
+  // server → one browser: "you are now on this floor". Sent after FLOOR_CHANGE, and also when the
+  // admin moves your department to another floor. Same payload as WORLD_INIT (a new world).
+  FLOOR_CHANGED: 'floor:changed',
 });

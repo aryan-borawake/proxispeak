@@ -56,6 +56,53 @@ export const ERROR_CODES = Object.freeze({
   NOT_JOINED: 'NOT_JOINED', // the browser sent something (e.g. a move) before joining
   BAD_MOVE: 'BAD_MOVE', // a move had a bad x, y or dir, so it was ignored
   BAD_SIGNAL: 'BAD_SIGNAL', // a WebRTC note had a bad shape, or its receiver is not online or not in earshot
+  BAD_TOKEN: 'BAD_TOKEN', // v5: a join token was missing, forged, expired, or its employee no longer exists
+  BAD_STATUS: 'BAD_STATUS', // v5: a status that is not one of STATUSES
+  BAD_FLOOR: 'BAD_FLOOR', // v5: a floor change to a floor that does not exist, or from a lab join
+  WING_CLOSED: 'WING_CLOSED', // v5: a move into a wing that is not open yet (the floor's tier is too small)
+});
+
+// ---- v5: the Infotact office ----
+
+// What a person shows next to their name. DND = Do Not Disturb: nobody hears them and they hear nobody.
+export const STATUSES = Object.freeze({
+  AVAILABLE: 'available',
+  BUSY: 'busy',
+  DND: 'dnd',
+});
+
+// Job roles in the employee directory. Only 'admin' may use the admin page.
+export const ROLES = Object.freeze({
+  ADMIN: 'admin',
+  DIRECTOR: 'director',
+  LEAD: 'lead',
+  EMPLOYEE: 'employee',
+  INTERN: 'intern',
+});
+
+// The four desk wings of one floor, in the order they open.
+export const WING_IDS = Object.freeze(['A', 'B', 'C', 'D']);
+
+// Every wing has this many desks. A floor's capacity is WING_IDS.length × DESKS_PER_WING = 100.
+export const DESKS_PER_WING = 25;
+
+// The most people one floor holds at its desks. Beyond this, new hires get a hot desk.
+export const FLOOR_CAPACITY = 100;
+
+// The floor everybody is on until the admin adds another one. Its id is also its room id.
+export const DEFAULT_FLOOR_ID = 'floor-1';
+
+// How long a sign-in token works: 12 hours, in ms.
+export const TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+
+// The six avatar colours a person can pick in the lobby.
+export const AVATAR_COLORS = Object.freeze(['#2f80ed', '#eb5757', '#27ae60', '#f2994a', '#9b51e0', '#00a3a3']);
+
+// The kinds of alert the admin page shows.
+export const ALERT_TYPES = Object.freeze({
+  FLOOR_FULL: 'floor-full', // a new hire got a hot desk because no desk was free
+  WING_OPENED: 'wing-opened', // a floor's tier grew and a wing opened
+  FLOOR_ADDED: 'floor-added', // a new floor was added
 });
 
 // How a voice's volume is set.
