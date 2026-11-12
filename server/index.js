@@ -16,6 +16,9 @@ import { attachSignaling } from './signaling/index.js';
 import { runGeoSelfCheck } from './signaling/geoSelfCheck.js';
 import { connectDb, createGeoEngine, Position } from './geo/index.js';
 import { DEFAULT_ROOM } from '../shared/constants.js';
+import { createAuthRouter } from './auth/routes.js';
+import { createOfficeRouter } from './office/routes.js';
+import { loadOffice } from './office/store.js';
 
 // Load settings from the .env file in the repo root (one level above server/), IF it exists.
 // On a laptop the file is there. On Render it is not (it is git-ignored, so it never reaches
@@ -104,6 +107,10 @@ app.get('/api/health', (req, res) => {
 });
 
 // TODO (Week 4): mount rooms routes (Person 2 writes them in server/geo/; Person 1 mounts them here).
+
+// v5: the sign-in routes (/api/auth/…, /api/me). The office and admin routes are mounted further
+// down, once signaling is attached (the admin page asks signaling who is online).
+app.use(createAuthRouter());
 
 // One HTTP server shared by Express and Socket.io.
 const httpServer = createServer(app);
@@ -219,7 +226,14 @@ async function startGeoEngine() {
 // `await` at the top level of a file works because this is an ES module ("type": "module").
 // We start the engine BEFORE listening, so no browser can join before the tick is ready.
 const geo = await startGeoEngine();
-attachSignaling(io, { geo });
+
+// v5: the Infotact directory (employees, departments, floors, alerts). It uses MongoDB when
+// startGeoEngine connected it, otherwise the demo directory in memory (office/store.js).
+await loadOffice();
+
+// createGeoEngine is passed too, so every floor (its own room) can get its own geo engine.
+const signaling = attachSignaling(io, { geo, createGeoEngine: geo ? createGeoEngine : null });
+app.use(createOfficeRouter({ getOnlineEmployeeIds: signaling.getOnlineEmployeeIds }));
 
 // Log who may connect, so a CORS problem on Render is easy to spot in the logs.
 console.log(`[server] allowed origins: ${ALLOWED_ORIGINS.join(', ')}`);

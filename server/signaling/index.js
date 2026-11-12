@@ -7,6 +7,9 @@
 // PLAYER_LEFT (Task 3); the proximity tick (Task 6, tick.js); SIGNAL note passing between
 // peers in earshot (Task 8); Person 2's geo engine, with fakeNearby.js as the fallback (Task 9);
 // the geo self-check at start-up (geoSelfCheck.js) and disconnect reasons in the log (Task 11).
+// v5 (the Infotact office, officeRooms.js): joining with a sign-in token, one room per floor,
+// EVENTS.PLAYER_STATUS (Do Not Disturb leaves you out of every peer set), EVENTS.FLOOR_CHANGE
+// (the elevator), EVENTS.OFFICE_UPDATE, and refusing moves into closed wings.
 
 import { EVENTS } from '../../shared/events.js';
 import {
@@ -15,10 +18,21 @@ import {
   DIRECTIONS,
   ERROR_CODES,
   STATE_BROADCAST_MS,
+  STATUSES,
   WORLD_MAX_PX,
 } from '../../shared/constants.js';
+import { getFloor } from '../office/store.js';
 import { addPlayer, removePlayer, getPlayer, listPlayers, updatePlayerPosition } from './players.js';
-import { startProximityTick, removeFromPeers, arePeers } from './tick.js';
+import { startProximityTick, removeFromPeers, arePeers, disconnectAllPeers } from './tick.js';
+import {
+  buildWorldInit,
+  getOnlineEmployeeIds,
+  isMoveIntoClosedWing,
+  movePlayerToFloor,
+  readTokenJoin,
+  toJoinedShape,
+  watchOfficeChanges,
+} from './officeRooms.js';
 
 // New players face down (towards the screen) when they appear. One of DIRECTIONS.
 const SPAWN_DIR = 'down';
@@ -34,11 +48,14 @@ const SIGNAL_TYPES = Object.freeze(['offer', 'answer', 'candidate']);
  * EVENTS.PLAYER_LEFT, EVENTS.PEERS_UPDATE (tick every PROXIMITY_TICK_MS) and EVENTS.SERVER_ERROR.
  *
  * @param {import('socket.io').Server} io - the Socket.io server
- * @param {{ geo: object | null }} options - geo is Person 2's engine from createGeoEngine(),
- *   or null when it isn't available (then the tick uses the fake, fakeNearby.js)
- * @returns {void}
+ * @param {{ geo: object | null, createGeoEngine?: Function }} options - geo is Person 2's engine
+ *   from createGeoEngine() for DEFAULT_ROOM, or null when it isn't available (then the tick uses
+ *   the fake, fakeNearby.js). v5: createGeoEngine makes one more engine per floor room.
+ * @returns {{ getOnlineEmployeeIds: () => Set<string> }} for the admin page's "online" column
  */
-export function attachSignaling(io, { geo }) {
+export function attachSignaling(io, { geo, createGeoEngine = null }) {
+  const geoFor = makeGeoDirectory(geo, createGeoEngine);
+
   // This runs once for every browser that connects.
   io.on('connection', (socket) => {
     console.log(`[signaling] socket connected: ${socket.id}`);
@@ -51,6 +68,14 @@ export function attachSignaling(io, { geo }) {
       handleMove(socket, payload);
     });
 
+    socket.on(EVENTS.PLAYER_STATUS, (payload) => {
+      handleStatus(io, socket, payload);
+    });
+
+    socket.on(EVENTS.FLOOR_CHANGE, (payload) => {
+      handleFloorChange(io, socket, payload, geoFor);
+    });
+
     socket.on(EVENTS.SIGNAL, (payload) => {
       handleSignal(io, socket, payload);
     });
@@ -58,7 +83,7 @@ export function attachSignaling(io, { geo }) {
     // `reason` is Socket.io's explanation, e.g. 'transport close' (tab closed, wifi lost,
     // page refreshed) or 'client namespace disconnect' (the page called socket.disconnect()).
     socket.on('disconnect', (reason) => {
-      handleDisconnect(io, socket, geo, reason);
+      handleDisconnect(io, socket, geoFor, reason);
     });
   });
 
@@ -66,15 +91,40 @@ export function attachSignaling(io, { geo }) {
   startStateBroadcast(io);
 
   // The "who is near whom?" check, every PROXIMITY_TICK_MS (250 ms). Also one timer, started once.
-  // geo goes to the tick: it uses Person 2's engine if we have one, otherwise the fake.
-  startProximityTick(io, geo);
+  // geoFor goes to the tick: it gives Person 2's engine for a room if we have one, otherwise null (the fake).
+  startProximityTick(io, geoFor);
+
+  // When the admin changes the office: tell the floors, move people between floors.
+  watchOfficeChanges(io, geoFor);
 
   console.log('[signaling] ready: listening for joins, moves and signals');
+  return { getOnlineEmployeeIds };
 }
 
 /**
- * A browser sent EVENTS.JOIN with { name }.
- * Check the name, add the player, put them in the room, and tell everyone.
+ * v5: one geo engine per room. Person 2's createGeoEngine({ roomId }) already keeps rooms apart
+ * (findNearby only returns people of its own room), so each floor gets its own engine, made the
+ * first time someone is on that floor. DEFAULT_ROOM keeps the engine server/index.js made.
+ * Without MongoDB (geo is null) every room uses the fake: geoFor returns null.
+ *
+ * @returns {(roomId: string) => object | null}
+ */
+function makeGeoDirectory(geo, createGeoEngine) {
+  const engines = new Map();
+  return (roomId) => {
+    if (!geo) return null;
+    if (roomId === DEFAULT_ROOM || !createGeoEngine) return geo;
+    if (!engines.has(roomId)) engines.set(roomId, createGeoEngine({ roomId }));
+    return engines.get(roomId);
+  };
+}
+
+/**
+ * A browser sent EVENTS.JOIN.
+ *   { name }   labs and robot tests: join DEFAULT_ROOM at DEFAULT_SPAWN with that name.
+ *   { token, avatarColor?, floorId?, status? }   v5, a signed-in employee: the server checks the
+ *              token, takes the name from the directory, and joins the room of their floor.
+ * Check it, add the player, put them in the room, and tell everyone in that room.
  */
 function handleJoin(socket, payload) {
   // 1. Don't let the same tab join twice.
@@ -85,41 +135,87 @@ function handleJoin(socket, payload) {
 
   // 2. Validate: never trust data from a browser. The payload might be missing,
   //    or name might be a number, an empty string, or just spaces.
-  const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
-  if (name === '') {
-    sendError(socket, ERROR_CODES.BAD_NAME, 'Join needs a name: send { name: "Riya" } with a non-empty string.');
-    return;
+  let fields;
+  let roomId;
+  let spawn;
+  const hasToken = typeof payload === 'object' && payload !== null && 'token' in payload;
+  if (hasToken) {
+    const tokenJoin = readTokenJoin(payload);
+    if (!tokenJoin.ok) {
+      sendError(socket, ERROR_CODES.BAD_TOKEN, tokenJoin.message);
+      return;
+    }
+    ({ fields, roomId, spawn } = tokenJoin);
+  } else {
+    const name = typeof payload?.name === 'string' ? payload.name.trim() : '';
+    if (name === '') {
+      sendError(socket, ERROR_CODES.BAD_NAME, 'Join needs a name: send { name: "Riya" } with a non-empty string.');
+      return;
+    }
+    roomId = DEFAULT_ROOM;
+    spawn = { x: DEFAULT_SPAWN.x, y: DEFAULT_SPAWN.y };
+    fields = { name, x: spawn.x, y: spawn.y, dir: SPAWN_DIR, roomId, status: STATUSES.AVAILABLE };
   }
 
-  // 3. Remember who was already here BEFORE adding the new player,
-  //    so the new player's list doesn't include themselves.
-  //    We copy only the contract's fields, so server-only fields (like `moved`) never leave the server.
-  const playersAlreadyHere = listPlayers().map(toJoinedShape);
+  // 3. Add the player at the spawn point. (buildWorldInit lists the others in the room, without me,
+  //    and copies only the contract's fields, so server-only fields like `moved` never leave the server.)
+  const player = addPlayer({ id: socket.id, ...fields });
 
-  // 4. Add the player at the spawn point.
-  const player = addPlayer({
-    id: socket.id,
-    name,
-    x: DEFAULT_SPAWN.x,
-    y: DEFAULT_SPAWN.y,
-    dir: SPAWN_DIR,
-  });
+  // 4. Put this socket in its room (a floor, or DEFAULT_ROOM), so room-wide messages reach it.
+  socket.join(roomId);
 
-  // 5. Put this socket in the office room, so room-wide messages reach it.
-  socket.join(DEFAULT_ROOM);
+  // 5. Reply to the new player only: who you are, where you start, who is here.
+  socket.emit(EVENTS.WORLD_INIT, buildWorldInit(player, spawn));
 
-  // 6. Reply to the new player only: who you are, where you start, who is here.
-  socket.emit(EVENTS.WORLD_INIT, {
-    selfId: socket.id,
-    roomId: DEFAULT_ROOM,
-    spawn: { x: DEFAULT_SPAWN.x, y: DEFAULT_SPAWN.y },
-    players: playersAlreadyHere,
-  });
+  // 6. Tell everyone else in the room. `socket.to(room)` means "the room, except me".
+  socket.to(roomId).emit(EVENTS.PLAYER_JOINED, toJoinedShape(player));
 
-  // 7. Tell everyone else in the room. `socket.to(room)` means "the room, except me".
-  socket.to(DEFAULT_ROOM).emit(EVENTS.PLAYER_JOINED, toJoinedShape(player));
+  console.log(`[signaling] player joined: ${player.name} (${socket.id}) in ${roomId}, ${listPlayers().length} online`);
+}
 
-  console.log(`[signaling] player joined: ${name} (${socket.id}), ${listPlayers().length} in ${DEFAULT_ROOM}`);
+/**
+ * v5: a browser sent EVENTS.PLAYER_STATUS { status }. Store it and tell the room { id, status }.
+ * Do Not Disturb: hang up every voice connection now; the tick then keeps the player out of every
+ * peer set (tick.js, askWhoIsNear). Back to available/busy: `moved = true`, so the next tick
+ * connects them to whoever is near.
+ */
+function handleStatus(io, socket, payload) {
+  const player = getPlayer(socket.id);
+  if (!player) {
+    sendError(socket, ERROR_CODES.NOT_JOINED, 'Join first: send EVENTS.JOIN before changing your status.');
+    return;
+  }
+  const status = payload?.status;
+  if (!Object.values(STATUSES).includes(status)) {
+    sendError(socket, ERROR_CODES.BAD_STATUS, `Status ignored: send { status } with one of ${Object.values(STATUSES).join(', ')}.`);
+    return;
+  }
+  player.status = status;
+  if (status === STATUSES.DND) {
+    disconnectAllPeers(io, player.id);
+  } else {
+    player.moved = true;
+  }
+  io.to(player.roomId).emit(EVENTS.PLAYER_STATUS, { id: player.id, status });
+  console.log(`[signaling] ${player.name} (${player.id}) is now ${status}`);
+}
+
+/**
+ * v5: a browser sent EVENTS.FLOOR_CHANGE { floorId } (the elevator or the Floors button).
+ * Only signed-in employees have floors; labs and tests (DEFAULT_ROOM) get BAD_FLOOR.
+ */
+function handleFloorChange(io, socket, payload, geoFor) {
+  const player = getPlayer(socket.id);
+  if (!player) {
+    sendError(socket, ERROR_CODES.NOT_JOINED, 'Join first: send EVENTS.JOIN before changing floor.');
+    return;
+  }
+  const floorId = payload?.floorId;
+  if (!player.employeeId || typeof floorId !== 'string' || !getFloor(floorId)) {
+    sendError(socket, ERROR_CODES.BAD_FLOOR, `Floor change ignored: "${floorId}" is not a floor (or you joined without signing in).`);
+    return;
+  }
+  movePlayerToFloor(io, socket, floorId, geoFor);
 }
 
 /**
@@ -148,7 +244,14 @@ function handleMove(socket, payload) {
     return;
   }
 
-  // 3. Store only x, y and dir (players.js copies them one by one).
+  // 3. v5: a wing that is not open yet can't be entered. The browser blocks it too (its collision
+  //    check), but we never trust the browser. Example: tier 1, a move into wing B → WING_CLOSED.
+  if (isMoveIntoClosedWing(getPlayer(socket.id), payload.x, payload.y)) {
+    sendError(socket, ERROR_CODES.WING_CLOSED, 'Move ignored: that wing is not open yet. It opens when the floor grows to its tier.');
+    return;
+  }
+
+  // 4. Store only x, y and dir (players.js copies them one by one).
   updatePlayerPosition(socket.id, { x: payload.x, y: payload.y, dir: payload.dir });
 }
 
@@ -305,15 +408,19 @@ function startStateBroadcast(io) {
       return;
     }
 
-    // Copy only the four fields the contract promises (no name, no `moved`).
-    const positions = players.map((player) => ({
-      id: player.id,
-      x: player.x,
-      y: player.y,
-      dir: player.dir,
-    }));
+    // v5: one message per room, holding only that room's players, so a floor never sees another
+    // floor's people. Copy only the four fields the contract promises (no name, no `moved`).
+    const positionsByRoom = new Map();
+    for (const player of players) {
+      const list = positionsByRoom.get(player.roomId) || [];
+      list.push({ id: player.id, x: player.x, y: player.y, dir: player.dir });
+      positionsByRoom.set(player.roomId, list);
+    }
 
-    io.to(DEFAULT_ROOM).emit(EVENTS.PLAYERS_STATE, { t: Date.now(), players: positions });
+    const t = Date.now();
+    for (const [roomId, positions] of positionsByRoom) {
+      io.to(roomId).emit(EVENTS.PLAYERS_STATE, { t, players: positions });
+    }
   }, STATE_BROADCAST_MS);
 
   // unref() tells Node: "this timer alone is not a reason to keep running".
@@ -333,7 +440,7 @@ function startStateBroadcast(io) {
  *
  * Example log: "[signaling] disconnect a1 (Riya): transport close"
  */
-function handleDisconnect(io, socket, geo, reason) {
+function handleDisconnect(io, socket, geoFor, reason) {
   const player = getPlayer(socket.id);
   const wasRemoved = removePlayer(socket.id);
 
@@ -351,12 +458,13 @@ function handleDisconnect(io, socket, geo, reason) {
   // With the real engine, also delete their saved position from MongoDB, so findNearby stops
   // returning them. We don't wait for it (nothing below needs it), and a failure must never
   // crash the server, so removeUserFromGeo catches and logs it.
+  const geo = geoFor(player.roomId);
   if (geo) {
     removeUserFromGeo(geo, socket.id);
   }
 
   // The leaving socket has already left the room, so "everyone in the room" means everyone else.
-  io.to(DEFAULT_ROOM).emit(EVENTS.PLAYER_LEFT, { id: socket.id });
+  io.to(player.roomId).emit(EVENTS.PLAYER_LEFT, { id: socket.id });
   console.log(`[signaling] player left: ${player.name} (${socket.id}), ${listPlayers().length} left`);
 }
 
@@ -371,14 +479,6 @@ async function removeUserFromGeo(geo, playerId) {
   } catch (error) {
     console.error(`[signaling] geo.removeUser failed for ${playerId} (the server keeps running):`, error);
   }
-}
-
-/**
- * The player shape used in EVENTS.WORLD_INIT and EVENTS.PLAYER_JOINED: { id, name, x, y, dir }.
- * Copying the fields keeps server-only fields (like `moved`) out of messages.
- */
-function toJoinedShape(player) {
-  return { id: player.id, name: player.name, x: player.x, y: player.y, dir: player.dir };
 }
 
 /** Send EVENTS.SERVER_ERROR { code, message } to one browser, and log it. */

@@ -13,7 +13,7 @@
 // Peers are SYMMETRIC: if Sam is in Riya's set, Riya is in Sam's set.
 
 import { EVENTS } from '../../shared/events.js';
-import { AUDIO_MODES, DISCONNECT_PX, EARSHOT_PX, PROXIMITY_TICK_MS } from '../../shared/constants.js';
+import { AUDIO_MODES, DISCONNECT_PX, EARSHOT_PX, PROXIMITY_TICK_MS, STATUSES } from '../../shared/constants.js';
 import { getPlayer, listPlayers } from './players.js';
 // "Who is near" has two possible sources (Task 9):
 //   - Person 2's geo engine (MongoDB), when server/index.js could start it (geo is an object);
@@ -60,10 +60,11 @@ export function arePeers(a, b) {
 /**
  * Start the proximity tick. Call this ONCE, from attachSignaling.
  * @param {import('socket.io').Server} io - the Socket.io server
- * @param {object | null} geo - Person 2's engine, or null to use the fake (fakeNearby.js)
+ * @param {(roomId: string) => object | null} geoFor - v5: gives Person 2's engine for one room
+ *   (every floor is its own room, and createGeoEngine takes a roomId), or null to use the fake
  * @returns {void}
  */
-export function startProximityTick(io, geo) {
+export function startProximityTick(io, geoFor) {
   // findNearby is async. With MongoDB (Task 9) one tick might take longer than 250 ms.
   // This flag stops a second tick starting while the first is still waiting,
   // so two ticks never change the same peer sets at the same time.
@@ -76,7 +77,7 @@ export function startProximityTick(io, geo) {
     tickIsRunning = true;
 
     try {
-      await runProximityTick(io, geo);
+      await runProximityTick(io, geoFor);
     } catch (error) {
       // Never let one bad tick crash the server. Log it, skip the rest of this tick;
       // the next tick tries again. A geo (MongoDB) error inside the tick also lands here.
@@ -99,7 +100,7 @@ export function startProximityTick(io, geo) {
  *   computePeerChanges(Sam's empty set, ...) → { entered: [Riya], left: [] }  (90 <= 100)
  *   → Sam's set gets Riya, Riya's set gets Sam, and BOTH browsers get peers:update.
  */
-async function runProximityTick(io, geo) {
+async function runProximityTick(io, geoFor) {
   // 1. Collect the players who are new or moved since the last tick. Nobody moved → nothing to do.
   const movedPlayers = listPlayers().filter((player) => player.moved === true);
   if (movedPlayers.length === 0) {
@@ -117,10 +118,23 @@ async function runProximityTick(io, geo) {
   // 2. Save the moved players' positions in MongoDB, in ONE call (Person 2 does one bulkWrite).
   //    Only with the real engine: the fake reads the in-memory Map directly, so it needs no saving.
   //    We send only { id, x, y } (not name, dir or the `moved` flag).
-  if (geo) {
-    const positions = movedPlayers.map((player) => ({ id: player.id, x: player.x, y: player.y }));
+  //    v5: one engine per room (floor), so we save each room's movers with that room's engine.
+  //    Example: Riya (floor-1) and Sam (floor-2) moved → floor-1's engine saves Riya, floor-2's saves Sam.
+  const moversByRoom = new Map();
+  for (const player of movedPlayers) {
+    const list = moversByRoom.get(player.roomId) || [];
+    list.push({ id: player.id, x: player.x, y: player.y });
+    moversByRoom.set(player.roomId, list);
+  }
+  const someRoomUsesGeo = [...moversByRoom.keys()].some((roomId) => geoFor(roomId) !== null);
+  if (someRoomUsesGeo) {
     try {
-      await geo.upsertPositions(positions);
+      await Promise.all(
+        [...moversByRoom].map(([roomId, positions]) => {
+          const geo = geoFor(roomId);
+          return geo ? geo.upsertPositions(positions) : null;
+        }),
+      );
     } catch (error) {
       // MongoDB failed (e.g. it went down). We can't trust "who is near" without fresh positions,
       // so we skip this tick. We set the flags back on first, so these players are checked again
@@ -139,7 +153,7 @@ async function runProximityTick(io, geo) {
   //    One failed question must not lose everyone's answer, so a failure becomes null.
   const nearbyLists = await Promise.all(
     movedPlayers.map((player) =>
-      askWhoIsNear(geo, player.id).catch((error) => {
+      askWhoIsNear(geoFor(player.roomId), player).catch((error) => {
         console.error(`[tick] findNearby failed for ${player.id}:`, error);
         return null;
       }),
@@ -199,15 +213,45 @@ async function runProximityTick(io, geo) {
  * It is `async` on purpose: if the engine throws straight away instead of returning a failed
  * Promise, `async` still turns that into a failed Promise, so the `.catch` in the tick handles both.
  *
- * @param {object | null} geo - Person 2's engine, or null for the fake
- * @param {string} playerId
+ * v5: Do Not Disturb. A DND player is near nobody, and nobody is near a DND player, so the tick
+ * leaves them out of every peer set: no voice to them and no voice from them. Also, only people
+ * in the same room (floor) count, whatever the engine says.
+ * Example: Riya is DND → askWhoIsNear(…, Riya) is [], and Sam's list never contains Riya.
+ *
+ * @param {object | null} geo - Person 2's engine for this player's room, or null for the fake
+ * @param {object} player - the player from players.js
  * @returns {Promise<Array<{ id: string, distance: number }>>}
  */
-async function askWhoIsNear(geo, playerId) {
-  if (geo) {
-    return geo.findNearby(playerId, DISCONNECT_PX);
+async function askWhoIsNear(geo, player) {
+  if (player.status === STATUSES.DND) {
+    return [];
   }
-  return fakeFindNearby(playerId, DISCONNECT_PX);
+  const nearby = geo ? await geo.findNearby(player.id, DISCONNECT_PX) : await fakeFindNearby(player.id, DISCONNECT_PX);
+  return nearby.filter((entry) => {
+    const other = getPlayer(entry.id);
+    return other !== undefined && other.roomId === player.roomId && other.status !== STATUSES.DND;
+  });
+}
+
+/**
+ * Hang up ALL of one player's voice connections now, and tell BOTH sides (peers:update "left").
+ * Used when a player turns on Do Not Disturb or changes floor (they stay connected to the server,
+ * so unlike removeFromPeers, they need the "left" messages too).
+ * Example: Riya is peers with Sam and Lee, turns on DND → Riya gets left [Sam, Lee]; Sam and Lee each get left [Riya].
+ *
+ * @param {import('socket.io').Server} io
+ * @param {string} playerId
+ */
+export function disconnectAllPeers(io, playerId) {
+  const peerSet = peerSets.get(playerId);
+  if (!peerSet || peerSet.size === 0) {
+    return;
+  }
+  const changesByPlayer = new Map();
+  for (const otherId of [...peerSet]) {
+    disconnectPair(playerId, otherId, changesByPlayer);
+  }
+  sendPeerUpdates(io, changesByPlayer);
 }
 
 /**

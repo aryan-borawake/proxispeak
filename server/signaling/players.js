@@ -23,8 +23,10 @@ const players = new Map();
  * @param {{ id: string, name: string, x: number, y: number, dir: string }} player
  * @returns {object} the player that was stored
  */
-export function addPlayer({ id, name, x, y, dir }) {
-  const player = { id, name, x, y, dir, moved: true };
+export function addPlayer({ id, name, x, y, dir, ...extra }) {
+  // v5: `extra` holds the optional fields the join handler sets: roomId, status, and for a
+  // signed-in employee employeeId, role, department { id, name, color }, floorId, deskId, avatarColor.
+  const player = { ...extra, id, name, x, y, dir, moved: true };
   players.set(id, player);
   return player;
 }
@@ -80,4 +82,13 @@ export function getPlayer(id) {
  */
 export function listPlayers() {
   return Array.from(players.values());
+}
+
+/**
+ * Every player in one room (one floor, or DEFAULT_ROOM).
+ * @param {string} roomId
+ * @returns {object[]}
+ */
+export function listPlayersInRoom(roomId) {
+  return listPlayers().filter((player) => player.roomId === roomId);
 }

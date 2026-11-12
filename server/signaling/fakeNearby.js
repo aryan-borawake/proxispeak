@@ -16,8 +16,7 @@ import { getPlayer, listPlayers } from './players.js';
  * - The user is never in their own answer.
  * - Closest first.
  * - "Within" includes the edge: a player exactly maxDistancePx away is included (<=).
- * - There is only one room for now (DEFAULT_ROOM), and every player is in it,
- *   so we don't need to filter by room.
+ * - Same room only (v5: DEFAULT_ROOM for labs and tests, one room per floor for the office).
  *
  * It is `async` (returns a Promise) only so it looks exactly like the real engine,
  * which has to wait for MongoDB.
@@ -42,7 +41,9 @@ export async function findNearby(userId, maxDistancePx) {
   const nearby = [];
   for (const other of listPlayers()) {
     // Never include the user themselves.
-    if (other.id === userId) {
+    // v5: only people in the SAME room count. Every floor is its own room, so two people on
+    // different floors are never "near", even when they stand at the same x and y.
+    if (other.id === userId || other.roomId !== me.roomId) {
       continue;
     }
 
